@@ -6,7 +6,6 @@
 <title>Генератор актов проверки и планов устранения замечаний</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --navy:#132A3E;
@@ -875,8 +874,123 @@ async function generateDocx(){
   toast('Акт сформирован: ' + fname);
 }
 
-/* ============================= XLSX (plan) BUILDER ============================= */
-function generateXlsx(){
+/* ============================= XLSX (plan) BUILDER — hand-built OOXML with real styling ============================= */
+function colLetter(idx){
+  let s = ''; idx++;
+  while (idx > 0){ const m = (idx - 1) % 26; s = String.fromCharCode(65 + m) + s; idx = Math.floor((idx - 1) / 26); }
+  return s;
+}
+// Style indices, defined to match xlsxStylesXml() below:
+// 0 default | 1 bold plain | 2 wrap plain | 3 title (navy fill, white bold, centered)
+// 4 column header (light-blue fill, bold, bordered, centered) | 5 data wrap+border (left)
+// 6 group header (amber fill, bold, bordered) | 7 data centered+border | 8 plain left (approval block)
+const XS = { DEFAULT:0, BOLD:1, WRAP:2, TITLE:3, COLHEAD:4, DATA_WRAP:5, GROUP:6, DATA_CENTER:7, PLAIN_LEFT:8 };
+
+function xlsxStylesXml(){
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<fonts count="3">
+ <font><sz val="11"/><name val="Calibri"/></font>
+ <font><b/><sz val="11"/><name val="Calibri"/></font>
+ <font><b/><sz val="12"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
+</fonts>
+<fills count="5">
+ <fill><patternFill patternType="none"/></fill>
+ <fill><patternFill patternType="gray125"/></fill>
+ <fill><patternFill patternType="solid"><fgColor rgb="FF132A3E"/><bgColor indexed="64"/></patternFill></fill>
+ <fill><patternFill patternType="solid"><fgColor rgb="FFE7EEF3"/><bgColor indexed="64"/></patternFill></fill>
+ <fill><patternFill patternType="solid"><fgColor rgb="FFFBEFDA"/><bgColor indexed="64"/></patternFill></fill>
+</fills>
+<borders count="2">
+ <border><left/><right/><top/><bottom/><diagonal/></border>
+ <border>
+  <left style="thin"><color rgb="FF9AA5AC"/></left>
+  <right style="thin"><color rgb="FF9AA5AC"/></right>
+  <top style="thin"><color rgb="FF9AA5AC"/></top>
+  <bottom style="thin"><color rgb="FF9AA5AC"/></bottom>
+ </border>
+</borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="9">
+ <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+ <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0"/>
+ <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>
+ <xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+ <xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+ <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="top" wrapText="1"/></xf>
+ <xf numFmtId="0" fontId="1" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyFont="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>
+ <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+ <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+</cellXfs>
+</styleSheet>`;
+}
+function xlsxContentTypesXml(){
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+ <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+ <Default Extension="xml" ContentType="application/xml"/>
+ <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+ <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+ <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+ <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+ <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>`;
+}
+function xlsxRootRelsXml(){
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+ <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+ <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+ <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>`;
+}
+function xlsxWorkbookXml(sheetName){
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets><sheet name="${escapeXml(sheetName)}" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`;
+}
+function xlsxWorkbookRelsXml(){
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+ <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+ <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`;
+}
+// rows: array of arrays of cell objects {v:text, s:styleIndex, n:isNumeric}
+// merges: array of "A1:D1" strings ; colWidths: array of numbers ; rowHeights: map rowIndex(0-based)->points
+function xlsxSheetXml(rows, merges, colWidths, rowHeights){
+  const colsXml = '<cols>' + colWidths.map((w,i) => `<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('') + '</cols>';
+  const dataXml = rows.map((row, rIdx) => {
+    const rNum = rIdx + 1;
+    const htAttr = rowHeights[rIdx] ? ` ht="${rowHeights[rIdx]}" customHeight="1"` : '';
+    const cellsXml = row.map((cell, cIdx) => {
+      const ref = colLetter(cIdx) + rNum;
+      if (!cell) return `<c r="${ref}"/>`;
+      const sAttr = cell.s !== undefined ? ` s="${cell.s}"` : '';
+      const val = cell.v === undefined || cell.v === null ? '' : cell.v;
+      if (val === '' ) return `<c r="${ref}"${sAttr}/>`;
+      if (cell.n) return `<c r="${ref}"${sAttr}><v>${val}</v></c>`;
+      return `<c r="${ref}" t="inlineStr"${sAttr}><is><t xml:space="preserve">${escapeXml(val)}</t></is></c>`;
+    }).join('');
+    return `<row r="${rNum}"${htAttr}>${cellsXml}</row>`;
+  }).join('');
+  const mergeXml = merges.length ? `<mergeCells count="${merges.length}">${merges.map(m => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>` : '';
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+${colsXml}
+<sheetViews><sheetView><pane ySplit="7" topLeftCell="A8" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+<sheetData>${dataXml}</sheetData>
+${mergeXml}
+</worksheet>`;
+}
+function estimateRowHeight(text, charsPerLine, minPt){
+  const len = (text || '').length;
+  const lines = Math.max(1, Math.ceil(len / charsPerLine));
+  return Math.max(minPt, Math.min(200, lines * 15 + 4));
+}
+
+async function generateXlsx(){
   if (!state.meta.subdivisionName || !state.meta.date){
     toast('Укажите наименование подразделения и дату акта (раздел 1)');
     return;
@@ -884,56 +998,77 @@ function generateXlsx(){
   const meta = state.meta, plan = state.plan;
   const rows = [];
   const merges = [];
+  const rowHeights = {};
 
-  rows.push(['СОГЛАСОВАНО','','','','','УТВЕРЖДАЮ','']);
-  rows.push([`${plan.agreedPosition || ''} ______________ ${plan.agreedName || ''}`,'','','','',
-              `${plan.approvedPosition || ''} ______________ ${plan.approvedName || ''}`,'']);
-  rows.push(['«____»____________ 20__ г.','','','','','«____»____________ 20__ г.','']);
-  rows.push(['','','','','','','']);
-  merges.push({s:{r:0,c:0},e:{r:0,c:3}}, {s:{r:0,c:5},e:{r:0,c:6}});
-  merges.push({s:{r:1,c:0},e:{r:1,c:3}}, {s:{r:1,c:5},e:{r:1,c:6}});
-  merges.push({s:{r:2,c:0},e:{r:2,c:3}}, {s:{r:2,c:5},e:{r:2,c:6}});
+  const r = (cells) => { rows.push(cells); return rows.length - 1; };
 
-  const titleRow = rows.length;
-  rows.push([`План мероприятий по устранению замечаний, выявленных в ходе проверки ЭТД ${meta.subdivisionType} ${meta.subdivisionName}. Акт от ${formatDateHuman(meta.date)} г.`,'','','','','','']);
-  merges.push({s:{r:titleRow,c:0},e:{r:titleRow,c:6}});
-  rows.push(['','','','','','','']);
+  r([ {v:'СОГЛАСОВАНО', s:XS.BOLD}, null, null, null, null, {v:'УТВЕРЖДАЮ', s:XS.BOLD}, null ]);
+  merges.push('A1:D1', 'F1:G1');
+  r([ {v:`${plan.agreedPosition || ''} ______________ ${plan.agreedName || ''}`, s:XS.PLAIN_LEFT}, null, null, null, null,
+      {v:`${plan.approvedPosition || ''} ______________ ${plan.approvedName || ''}`, s:XS.PLAIN_LEFT}, null ]);
+  merges.push('A2:D2', 'F2:G2');
+  r([ {v:'«____»____________ 20__ г.', s:XS.PLAIN_LEFT}, null, null, null, null, {v:'«____»____________ 20__ г.', s:XS.PLAIN_LEFT}, null ]);
+  merges.push('A3:D3', 'F3:G3');
+  r([]);
 
-  const headerRow = rows.length;
-  rows.push(['№ п/п','№ по акту','Выявленные замечания','Срок устранения','Ответственный исполнитель (Ф.И.О., должность)','Отметка о выполнении (да/нет)','Примечание']);
+  const titleText = `План мероприятий по устранению замечаний, выявленных в ходе проверки ЭТД ${meta.subdivisionType} ${meta.subdivisionName}. Акт от ${formatDateHuman(meta.date)} г.`;
+  const titleRowIdx = r([ {v:titleText, s:XS.TITLE}, null, null, null, null, null, null ]);
+  merges.push(`A${titleRowIdx+1}:G${titleRowIdx+1}`);
+  rowHeights[titleRowIdx] = estimateRowHeight(titleText, 90, 30);
+  r([]);
+
+  const headerRowIdx = r([
+    {v:'№ п/п', s:XS.COLHEAD}, {v:'№ по акту', s:XS.COLHEAD}, {v:'Выявленные замечания', s:XS.COLHEAD},
+    {v:'Срок устранения', s:XS.COLHEAD}, {v:'Ответственный исполнитель (Ф.И.О., должность)', s:XS.COLHEAD},
+    {v:'Отметка о выполнении (да/нет)', s:XS.COLHEAD}, {v:'Примечание', s:XS.COLHEAD}
+  ]);
+  rowHeights[headerRowIdx] = 34;
 
   let n = 1;
   state.sections.forEach(sec => {
     if (!sec.findings.length) return;
-    const grpRow = rows.length;
-    rows.push([sec.title || 'Раздел','','','','','','']);
-    merges.push({s:{r:grpRow,c:0},e:{r:grpRow,c:6}});
+    const grpIdx = r([ {v:sec.title || 'Раздел', s:XS.GROUP}, null, null, null, null, null, null ]);
+    merges.push(`A${grpIdx+1}:G${grpIdx+1}`);
     sec.findings.forEach(f => {
       const text = (f.object ? f.object + ' — ' : '') + (f.description || '');
-      rows.push([n++, f.number, text, formatDateHuman(f.deadline), f.responsible || '', '', '']);
+      const idx = r([
+        {v:n++, s:XS.DATA_CENTER, n:true},
+        {v:f.number || '', s:XS.DATA_CENTER},
+        {v:text, s:XS.DATA_WRAP},
+        {v:formatDateHuman(f.deadline), s:XS.DATA_CENTER},
+        {v:f.responsible || '', s:XS.DATA_WRAP},
+        {v:'', s:XS.DATA_CENTER},
+        {v:'', s:XS.DATA_WRAP}
+      ]);
+      rowHeights[idx] = estimateRowHeight(text, 60, 18);
     });
   });
 
   if (n === 1){
-    rows.push(['','','Замечания не заданы — добавьте их в разделах акта','','','','']);
+    r([ null, null, {v:'Замечания не заданы — добавьте их в разделах акта', s:XS.DATA_WRAP}, null, null, null, null ]);
   }
 
-  const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = [{wch:6},{wch:10},{wch:55},{wch:14},{wch:30},{wch:16},{wch:18}];
-  ws['!merges'] = merges;
-  ws['!rows'] = rows.map((_, i) => (i === headerRow ? {hpt:32} : undefined));
+  const colWidths = [7, 11, 55, 14, 30, 16, 18];
+  const sheetXml = xlsxSheetXml(rows, merges, colWidths, rowHeights);
 
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'План устранения');
-  const wbout = XLSX.write(wb, { bookType:'xlsx', type:'array' });
-  const blob = new Blob([wbout], { type:'application/octet-stream' });
+  const zip = new JSZip();
+  zip.file('[Content_Types].xml', xlsxContentTypesXml());
+  zip.file('_rels/.rels', xlsxRootRelsXml());
+  zip.file('xl/workbook.xml', xlsxWorkbookXml('План устранения'));
+  zip.file('xl/_rels/workbook.xml.rels', xlsxWorkbookRelsXml());
+  zip.file('xl/styles.xml', xlsxStylesXml());
+  zip.file('xl/worksheets/sheet1.xml', sheetXml);
+  zip.file('docProps/core.xml', coreXml(titleText));
+  zip.file('docProps/app.xml', appXml());
+
+  const blob = await zip.generateAsync({ type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const fname = `Plan_ustraneniya_${sanitizeFilename(meta.subdivisionType)}_${sanitizeFilename(meta.subdivisionName)}_${meta.date}.xlsx`;
   saveAs(blob, fname);
   toast('План устранения сформирован: ' + fname);
 }
 
 document.getElementById('btnGenDocx').addEventListener('click', () => generateDocx().catch(e => { console.error(e); toast('Ошибка при создании акта: ' + e.message); }));
-document.getElementById('btnGenXlsx').addEventListener('click', () => { try{ generateXlsx(); }catch(e){ console.error(e); toast('Ошибка при создании плана: ' + e.message); } });
+document.getElementById('btnGenXlsx').addEventListener('click', () => generateXlsx().catch(e => { console.error(e); toast('Ошибка при создании плана: ' + e.message); }));
 
 /* ============================= INIT ============================= */
 (async function init(){
