@@ -174,13 +174,23 @@
     Внутри раздела добавляйте замечания — они попадут и в акт, и в план устранения.</p>
     <div id="sectionsContainer"></div>
     <button class="dashed-add" id="addSectionBtn">+ Добавить раздел проверки</button>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+      <button class="btn-outline btn-sm" id="btnInsertSwapTable">+ Типовая таблица «Сведения о ходе строительства» (СВАП)</button>
+      <button class="btn-outline btn-sm" id="btnInsertSwapQuickstart">+ Типовые разделы акта СВАП</button>
+    </div>
   </div>
 
   <div class="card" id="conclusionCard">
-    <h2>3 · Вывод и срок устранения</h2>
+    <h2>3 · Вывод, нарушенные требования и рекомендация</h2>
     <div class="field" style="margin-bottom:14px;">
       <span>Вывод по результатам проверки</span>
       <textarea class="input textarea" id="conclusionInput" rows="4"></textarea>
+    </div>
+    <div id="violatedOrdersContainer" style="margin-bottom:8px;"></div>
+    <button class="dashed-add" id="addViolatedOrderBtn" style="margin-bottom:14px;">+ Добавить нарушенный приказ/норматив</button>
+    <div class="field" style="margin-bottom:14px;">
+      <span>Рекомендация (необязательно — для актов СВАП/строительства)</span>
+      <textarea class="input textarea" id="recommendationInput" rows="3"></textarea>
     </div>
     <div class="field">
       <span>Итоговое поручение по срокам</span>
@@ -207,8 +217,9 @@
   </div>
 
   <footer class="note">
-    Фотографии хранятся только в этой вкладке браузера и не сохраняются между сеансами — добавьте их непосредственно
-    перед скачиванием акта. Текстовые поля черновика сохраняются автоматически.
+    Черновик (текст и фотографии) сохраняется локально в этом браузере — при обновлении страницы или пропадании
+    интернета данные не теряются. Хранится только на этом устройстве и в этом браузере: не удаляйте историю/данные
+    сайта и используйте один и тот же браузер для продолжения работы над актом.
   </footer>
 </main>
 
@@ -219,20 +230,42 @@
 let uidCounter = 1;
 function uid(){ return 'id' + (uidCounter++) + '_' + Math.random().toString(36).slice(2,7); }
 
+function introTemplate(actType){
+  if (actType === 'swap'){
+    return 'Техническим контролёром СТИ ______________ в присутствии начальника ______________ ЛТЦ ______________ '
+      + 'проведена проверка качества строительства волоконно-оптической сети связи, построенной хозяйственным '
+      + 'способом, в рамках проекта «Развёртывание сети FTTH (SWAP)».';
+  }
+  return 'Нами, в составе ведущего инженера электросвязи ОЭСТ ______________, начальника ЦТО МС ______________, '
+    + 'ведущего инженера электросвязи ГПРиКК ______________, на основании плана ЭТД 2026 года, в присутствии '
+    + 'ответственных руководителей проведена проверка эксплуатационно-технической деятельности.';
+}
+function recommendationTemplate(actType){
+  if (actType === 'swap'){
+    return 'Руководству ЛТЦ ЦТО МС совместно с Актюбинским СЭиРСТ разработать и реализовать комплекс организационно-'
+      + 'технических мероприятий по устранению выявленных замечаний, обеспечить приведение объектов строительства '
+      + 'в соответствие с требованиями действующих нормативных документов АО «Казахтелеком». План мероприятий с '
+      + 'указанием конкретных мероприятий, сроков исполнения и ответственных лиц представить в Службу технической '
+      + 'инспекции в срок до __.__.2026 года, обеспечив полное устранение выявленных замечаний до __.__.2026 года.';
+  }
+  return '';
+}
 function defaultState(){
   return {
     meta:{
+      actType:'etd', // 'etd' = акт проверки ЭТД, 'swap' = акт проверки качества строительства ВОЛС (SWAP)
       subdivisionType:'ЛТУ',
       subdivisionName:'',
       period:'2025–2026',
       date:'',
       location:'',
-      introText:'Нами, в составе ведущего инженера электросвязи ОЭСТ ______________, начальника ЦТО МС ______________, '
-        + 'ведущего инженера электросвязи ГПРиКК ______________, на основании плана ЭТД 2026 года, в присутствии '
-        + 'ответственных руководителей проведена проверка эксплуатационно-технической деятельности.',
+      district:'',
+      introText: introTemplate('etd'),
     },
     sections:[],
     conclusion:'',
+    recommendation:'',
+    violatedOrders:[],
     deadlineNote:'По выявленным замечаниям в срок до __.__.20__ года составить план-график по устранению выявленных '
       + 'несоответствий по указанным замечаниям.',
     signatories:[
@@ -247,39 +280,93 @@ function defaultState(){
 }
 
 let state = defaultState();
+function migrateState(s){
+  const d = defaultState();
+  s.meta = Object.assign({}, d.meta, s.meta || {});
+  if (s.conclusion === undefined) s.conclusion = d.conclusion;
+  if (s.recommendation === undefined) s.recommendation = d.recommendation;
+  if (!s.violatedOrders) s.violatedOrders = [];
+  if (!s.deadlineNote) s.deadlineNote = d.deadlineNote;
+  if (!s.signatories) s.signatories = d.signatories;
+  if (!s.plan) s.plan = d.plan;
+  if (!s.sections) s.sections = [];
+  s.sections.forEach(sec => { sec.findings.forEach(f => { f.photos = f.photos || []; }); });
+  return s;
+}
 
-/* ============================= STORAGE (autosave, text only) ============================= */
+/* ============================= STORAGE (IndexedDB — fully offline, survives refresh/no internet) ============================= */
+const IDB_NAME = 'akt_generator_db';
+const IDB_STORE = 'kv';
+const IDB_KEY = 'act_draft_v1';
+let dbPromise = null;
+
+function openDB(){
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    if (!window.indexedDB){ reject(new Error('IndexedDB недоступен')); return; }
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore(IDB_STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  return dbPromise;
+}
+function idbSet(key, value){
+  return openDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(value, key);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+function idbGet(key){
+  return openDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  }));
+}
+
 let saveTimer = null;
+let dirtySinceSave = false;
 function scheduleSave(){
+  dirtySinceSave = true;
   const pill = document.getElementById('statusPill');
   pill.textContent = 'сохранение…';
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async ()=>{
-    try{
-      const strip = JSON.parse(JSON.stringify(state));
-      strip.sections.forEach(s => s.findings.forEach(f => { f.photos = []; }));
-      if (window.storage && window.storage.set){
-        await window.storage.set('act_draft_v1', JSON.stringify(strip), false);
-      }
-      pill.textContent = 'черновик сохранён · ' + new Date().toLocaleTimeString('ru-RU');
-    }catch(e){
-      pill.textContent = 'черновик не сохранён (слишком большой)';
-    }
-  }, 700);
+  saveTimer = setTimeout(doSaveNow, 600);
 }
+async function doSaveNow(){
+  const pill = document.getElementById('statusPill');
+  try{
+    await idbSet(IDB_KEY, JSON.stringify(state));
+    dirtySinceSave = false;
+    pill.textContent = 'сохранено локально · ' + new Date().toLocaleTimeString('ru-RU');
+  }catch(e){
+    pill.textContent = 'не удалось сохранить: ' + e.message;
+  }
+}
+// Also try to flush on tab close / refresh / connection loss, and warn if a save is still pending.
+window.addEventListener('beforeunload', (e) => {
+  if (dirtySinceSave){
+    clearTimeout(saveTimer);
+    doSaveNow();
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+window.addEventListener('offline', () => { toast('Соединение потеряно — данные продолжают сохраняться локально в этом браузере'); });
 
 async function loadDraft(){
   try{
-    if (window.storage && window.storage.get){
-      const res = await window.storage.get('act_draft_v1', false);
-      if (res && res.value){
-        const parsed = JSON.parse(res.value);
-        parsed.sections.forEach(s => s.findings.forEach(f => { f.photos = f.photos || []; }));
-        state = parsed;
-        return true;
-      }
+    const raw = await idbGet(IDB_KEY);
+    if (raw){
+      const parsed = JSON.parse(raw);
+      state = migrateState(parsed);
+      return true;
     }
-  }catch(e){ /* no saved draft yet */ }
+  }catch(e){ /* no saved draft yet, or IndexedDB unavailable */ }
   return false;
 }
 
@@ -343,30 +430,91 @@ function formatDateHuman(iso){
   return `${d}.${m}.${y}`;
 }
 
-/* ============================= META RENDER (built once) ============================= */
+/* ============================= META RENDER (built once, re-rendered on act-type change) ============================= */
 function renderMeta(){
   const wrap = document.getElementById('metaFields');
   wrap.innerHTML = '';
-  const g1 = el('div', {class:'grid3'});
+
+  const g0 = el('div', {class:'grid'});
+  g0.appendChild(labeled('Тип акта', selectInput(state.meta.actType,
+    ['etd','swap'], v => { state.meta.actType = v; renderMeta(); scheduleSave(); })));
+  // relabel select options with readable text (selectInput uses raw values as labels, so rebuild manually)
+  wrap.appendChild(g0);
+  const typeSelect = g0.querySelector('select');
+  typeSelect.innerHTML = '';
+  [['etd','Акт проверки ЭТД'], ['swap','Акт проверки качества строительства ВОЛС (SWAP)']].forEach(([val,label]) => {
+    const o = el('option', {value:val}, label);
+    if (val === state.meta.actType) o.setAttribute('selected','selected');
+    typeSelect.appendChild(o);
+  });
+
+  const g1 = el('div', {class:'grid3', style:'margin-top:14px;'});
   g1.appendChild(labeled('Тип подразделения', selectInput(state.meta.subdivisionType,
     ['ЛТЦ','ЛТУ','ЦТО МС','Цех','Участок','ДЭСД','Другое'], v => state.meta.subdivisionType = v)));
   g1.appendChild(labeled('Наименование (например «Мартукского района»)',
     textInput(state.meta.subdivisionName, v => state.meta.subdivisionName = v, 'Мартукского района')));
-  g1.appendChild(labeled('Период проверки', textInput(state.meta.period, v => state.meta.period = v, '2025–2026')));
+  g1.appendChild(labeled(state.meta.actType === 'swap' ? 'Проект / период строительства' : 'Период проверки',
+    textInput(state.meta.period, v => state.meta.period = v, state.meta.actType === 'swap' ? 'FTTH (SWAP), 2024–2026' : '2025–2026')));
   wrap.appendChild(g1);
 
   const g2 = el('div', {class:'grid3', style:'margin-top:14px;'});
   g2.appendChild(labeled('Дата акта', dateInput(state.meta.date, v => state.meta.date = v)));
-  g2.appendChild(labeled('Место (населённый пункт)', textInput(state.meta.location, v => state.meta.location = v, 'п. Мартук')));
+  g2.appendChild(labeled('Место (населённый пункт)', textInput(state.meta.location, v => state.meta.location = v, 'с. Кобда')));
+  if (state.meta.actType === 'swap'){
+    g2.appendChild(labeled('Район / область', textInput(state.meta.district, v => state.meta.district = v, 'Кобдинского района Актюбинской области')));
+  }
   wrap.appendChild(g2);
 
   const g3 = el('div', {style:'margin-top:14px;'});
-  g3.appendChild(labeled('Вводная часть акта (состав комиссии, основание проверки)',
-    textareaInput(state.meta.introText, v => state.meta.introText = v, 4)));
+  const introLabelRow = el('div', {style:'display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;'}, [
+    el('span', {class:'field-label', style:'font-size:12.5px; color:var(--ink-soft); font-weight:600;'}, 'Вводная часть акта (состав комиссии, основание проверки)'),
+    el('button', {class:'btn-outline btn-sm', type:'button', onClick: () => {
+      state.meta.introText = introTemplate(state.meta.actType);
+      renderMeta();
+      scheduleSave();
+    }}, 'Вставить шаблон')
+  ]);
+  g3.appendChild(introLabelRow);
+  g3.appendChild(textareaInput(state.meta.introText, v => state.meta.introText = v, 4));
   wrap.appendChild(g3);
 }
 
 /* ============================= SECTIONS RENDER ============================= */
+function insertSwapStatsTable(){
+  state.sections.push({
+    id: uid(), title:'Сведения о ходе строительства', description:'',
+    table:{
+      headers:['Показатель','План','Факт'],
+      rows:[
+        ['Монтированная ёмкость действующей АТС, номеров','',''],
+        ['Задействованная ёмкость действующей АТС, номеров','',''],
+        ['Запланированная ёмкость сети с учётом 30% развития, GPON-портов','',''],
+        ['Установка новых опор (Б/У), шт.','',''],
+        ['Прокладка магистрального оптического кабеля, км','',''],
+        ['Прокладка распределительного оптического кабеля, км','',''],
+        ['Монтаж оптических муфт, шт.','',''],
+        ['Монтаж оконечных устройств, ОРКСпн, шт.','',''],
+        ['Переключение существующих абонентов','',''],
+        ['Подключение новых абонентов','',''],
+        ['Выполнение строительно-монтажных работ, %','',''],
+        ['Исполнительная документация','','']
+      ]
+    },
+    findings:[]
+  });
+  renderSections();
+  scheduleSave();
+  toast('Добавлена типовая таблица «Сведения о ходе строительства»');
+}
+function insertSwapQuickStart(){
+  ['Исполнительная документация', 'Выборочный осмотр объектов строительства',
+   'Осмотр оптических распределительных муфт на ПСУ и опорах связи'].forEach(t => {
+    state.sections.push({ id: uid(), title:t, description:'', table:null, findings:[] });
+  });
+  renderSections();
+  scheduleSave();
+  toast('Добавлены типовые разделы акта СВАП');
+}
 function addSection(){
   state.sections.push({ id: uid(), title:'', description:'', table:null, findings:[] });
   renderSections();
@@ -604,13 +752,41 @@ document.getElementById('addSignBtn').addEventListener('click', () => {
   scheduleSave();
 });
 
-/* ============================= CONCLUSION + PLAN META RENDER ============================= */
+/* ============================= CONCLUSION + VIOLATED ORDERS + PLAN META RENDER ============================= */
 function renderConclusion(){
   document.getElementById('conclusionInput').value = state.conclusion || '';
   document.getElementById('conclusionInput').addEventListener('input', e => { state.conclusion = e.target.value; scheduleSave(); });
+  document.getElementById('recommendationInput').value = state.recommendation || '';
+  document.getElementById('recommendationInput').addEventListener('input', e => { state.recommendation = e.target.value; scheduleSave(); });
   document.getElementById('deadlineNoteInput').value = state.deadlineNote || '';
   document.getElementById('deadlineNoteInput').addEventListener('input', e => { state.deadlineNote = e.target.value; scheduleSave(); });
+  renderViolatedOrders();
 }
+function renderViolatedOrders(){
+  const wrap = document.getElementById('violatedOrdersContainer');
+  wrap.innerHTML = '';
+  if (state.violatedOrders.length === 0){
+    wrap.appendChild(el('p', {class:'empty-hint'}, 'Например: «Приказ №659 от 12.12.2025г. „Правила приёмки в эксплуатацию линейных сооружений...“» — «в части составления исполнительной документации».'));
+  }
+  state.violatedOrders.forEach((o, i) => {
+    const row = el('div', {class:'sign-row'});
+    row.appendChild(labeled('Нормативный документ (приказ, №, дата, название)',
+      textInput(o.reference, v => o.reference = v, 'Приказ №659 от 12.12.2025г. «Правила приёмки...»')));
+    row.appendChild(labeled('В части (нарушенное требование)',
+      textInput(o.detail, v => o.detail = v, 'составления исполнительной документации')));
+    row.appendChild(el('button', {class:'icon-btn', title:'Удалить', onClick: () => {
+      state.violatedOrders.splice(i,1);
+      renderViolatedOrders();
+      scheduleSave();
+    }}, '✕'));
+    wrap.appendChild(row);
+  });
+}
+document.getElementById('addViolatedOrderBtn').addEventListener('click', () => {
+  state.violatedOrders.push({id:uid(), reference:'', detail:''});
+  renderViolatedOrders();
+  scheduleSave();
+});
 function renderPlanMeta(){
   const ids = ['planAgreedPosition','planAgreedName','planApprovedPosition','planApprovedName'];
   const map = {
@@ -634,6 +810,8 @@ function renderAll(){
 }
 
 document.getElementById('addSectionBtn').addEventListener('click', addSection);
+document.getElementById('btnInsertSwapTable').addEventListener('click', insertSwapStatsTable);
+document.getElementById('btnInsertSwapQuickstart').addEventListener('click', insertSwapQuickStart);
 document.getElementById('btnNewAct').addEventListener('click', () => {
   if (!confirm('Начать новый акт? Текущий черновик будет заменён (фото и текст).')) return;
   state = defaultState();
@@ -810,11 +988,22 @@ async function generateDocx(){
   }
   const meta = state.meta;
   const parts = [];
-  const title = `Акт проверки эксплуатационно-технической деятельности ${meta.subdivisionType} ${meta.subdivisionName} за ${meta.period} год`;
-  parts.push(heading(title, 1));
-  parts.push(paragraph(`«${formatDateHuman(meta.date)}» г.`, { align:'center', size:22, spacingAfter:40 }));
-  if (meta.location) parts.push(paragraph(meta.location, { align:'center', size:22, spacingAfter:200 }));
-  parts.push(heading('Акт', 2));
+  let title;
+  if (meta.actType === 'swap'){
+    const placePart = [meta.location, meta.district].filter(Boolean).join(' ');
+    title = `Акт проверки качества строительства волоконно-оптической сети связи${placePart ? ' в ' + placePart : ''}`;
+    parts.push(paragraph(`${formatDateHuman(meta.date)} г.` + (meta.location ? `                                                                                          ${meta.location}` : ''),
+      { align:'left', size:22, spacingAfter:160 }));
+    parts.push(heading('АКТ', 1, 'center'));
+    parts.push(heading('проверки качества строительства волоконно-оптической сети связи', 2, 'center'));
+    if (placePart) parts.push(paragraph('в ' + placePart, { align:'center', bold:true, size:24, spacingAfter:200 }));
+  } else {
+    title = `Акт проверки эксплуатационно-технической деятельности ${meta.subdivisionType} ${meta.subdivisionName} за ${meta.period} год`;
+    parts.push(heading(title, 1));
+    parts.push(paragraph(`«${formatDateHuman(meta.date)}» г.`, { align:'center', size:22, spacingAfter:40 }));
+    if (meta.location) parts.push(paragraph(meta.location, { align:'center', size:22, spacingAfter:200 }));
+    parts.push(heading('Акт', 2));
+  }
   parts.push(paragraph(meta.introText, { align:'both' }));
 
   let mediaFiles = [];
@@ -847,6 +1036,17 @@ async function generateDocx(){
 
   parts.push(heading('Вывод:', 3, 'left'));
   parts.push(paragraph(state.conclusion || '—', { align:'both' }));
+  if (state.violatedOrders && state.violatedOrders.length){
+    state.violatedOrders.forEach(o => {
+      if (!o.reference && !o.detail) return;
+      const line = `Не исполнены требования ${o.reference || '—'}` + (o.detail ? ` в части: ${o.detail}.` : '.');
+      parts.push(paragraph(line, { align:'both', spacingAfter:80 }));
+    });
+  }
+  if (state.recommendation){
+    parts.push(heading('Рекомендация:', 3, 'left'));
+    parts.push(paragraph(state.recommendation, { align:'both' }));
+  }
   if (state.deadlineNote){
     parts.push(paragraph(state.deadlineNote, { italic:true, align:'both', spacingBefore:100 }));
   }
@@ -1011,7 +1211,9 @@ async function generateXlsx(){
   merges.push('A3:D3', 'F3:G3');
   r([]);
 
-  const titleText = `План мероприятий по устранению замечаний, выявленных в ходе проверки ЭТД ${meta.subdivisionType} ${meta.subdivisionName}. Акт от ${formatDateHuman(meta.date)} г.`;
+  const titleText = meta.actType === 'swap'
+    ? `План мероприятий по устранению замечаний, выявленных в ходе проверки качества строительства ВОЛС${meta.location ? ' в ' + [meta.location, meta.district].filter(Boolean).join(' ') : ''}. Акт от ${formatDateHuman(meta.date)} г.`
+    : `План мероприятий по устранению замечаний, выявленных в ходе проверки ЭТД ${meta.subdivisionType} ${meta.subdivisionName}. Акт от ${formatDateHuman(meta.date)} г.`;
   const titleRowIdx = r([ {v:titleText, s:XS.TITLE}, null, null, null, null, null, null ]);
   merges.push(`A${titleRowIdx+1}:G${titleRowIdx+1}`);
   rowHeights[titleRowIdx] = estimateRowHeight(titleText, 90, 30);
