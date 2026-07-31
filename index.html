@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Генератор актов проверки и планов устранения замечаний</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --navy:#132A3E;
+    --navy-2:#1D3E58;
+    --amber:#D9A441;
+    --amber-dark:#B5822C;
+    --paper:#F6F4EF;
+    --card:#FFFFFF;
+    --line:#DCE1E6;
+    --ink:#1B2530;
+    --ink-soft:#5B6B78;
+    --danger:#C1443A;
+    --ok:#3E7D51;
+    --radius:10px;
+    --mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+    --serif: Georgia, 'Times New Roman', serif;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--paper); color:var(--ink); font-family:var(--sans);
+    background-image:
+      linear-gradient(var(--paper),var(--paper)),
+      repeating-linear-gradient(0deg, rgba(19,42,62,0.035) 0 1px, transparent 1px 28px),
+      repeating-linear-gradient(90deg, rgba(19,42,62,0.035) 0 1px, transparent 1px 28px);
+  }
+  .topbar{
+    position:sticky; top:0; z-index:50;
+    background:linear-gradient(135deg,var(--navy),var(--navy-2));
+    color:#fff; padding:14px 22px; display:flex; align-items:center; justify-content:space-between;
+    box-shadow:0 3px 10px rgba(0,0,0,0.18); flex-wrap:wrap; gap:10px;
+  }
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand .mark{
+    width:38px;height:38px;border-radius:8px;background:var(--amber);
+    display:flex;align-items:center;justify-content:center;color:var(--navy);font-family:var(--mono);
+    font-weight:700; font-size:13px; flex:none;
+  }
+  .brand h1{font-size:16px;margin:0;font-family:var(--serif); letter-spacing:.2px;}
+  .brand p{margin:1px 0 0;font-size:11.5px;color:#C9D6E0;}
+  .actions{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
+  button{
+    font-family:var(--sans); cursor:pointer; border-radius:8px; border:1px solid transparent;
+    padding:9px 14px; font-size:13px; font-weight:600; transition:transform .05s ease, filter .15s ease;
+  }
+  button:active{transform:translateY(1px);}
+  .btn-ghost{background:rgba(255,255,255,0.08); color:#fff; border-color:rgba(255,255,255,0.25);}
+  .btn-ghost:hover{background:rgba(255,255,255,0.16);}
+  .btn-amber{background:var(--amber); color:var(--navy);}
+  .btn-amber:hover{background:#E4B65C;}
+  .btn-outline{background:#fff;color:var(--navy);border-color:var(--line);}
+  .btn-outline:hover{background:#EFF3F6;}
+  .btn-danger-outline{background:#fff;color:var(--danger);border-color:#E7C7C3;}
+  .btn-danger-outline:hover{background:#FBEEEC;}
+  .btn-sm{padding:6px 10px;font-size:12px;}
+  main{max-width:980px; margin:26px auto 80px; padding:0 18px;}
+  .lede{margin:6px 0 22px; color:var(--ink-soft); font-size:13.5px; line-height:1.5;}
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    padding:20px 22px; margin-bottom:18px; box-shadow:0 1px 2px rgba(19,42,62,0.04);
+  }
+  .card h2{
+    font-family:var(--serif); font-size:18px; margin:0 0 4px; color:var(--navy);
+    display:flex;align-items:center; gap:8px;
+  }
+  .card .sub{color:var(--ink-soft); font-size:12.5px; margin:0 0 16px;}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+  .grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px;}
+  @media (max-width:680px){ .grid, .grid3{grid-template-columns:1fr;} }
+  .field{display:flex; flex-direction:column; gap:5px; font-size:12.5px; color:var(--ink-soft); font-weight:600;}
+  .input{
+    font-family:var(--sans); border:1px solid var(--line); border-radius:7px; padding:8px 10px;
+    font-size:13.5px; color:var(--ink); background:#FCFDFD; width:100%;
+  }
+  .input:focus{outline:2px solid var(--amber); outline-offset:1px; border-color:var(--amber-dark);}
+  textarea.input{resize:vertical; line-height:1.45; font-family:var(--sans);}
+  .section-block{
+    border:1px solid var(--line); border-radius:var(--radius); margin-bottom:16px; overflow:hidden;
+    background:var(--card);
+  }
+  .section-head{
+    background:#EEF2F5; padding:12px 16px; display:flex; gap:10px; align-items:flex-start;
+    border-bottom:1px solid var(--line);
+  }
+  .section-badge{
+    font-family:var(--mono); background:var(--navy); color:#fff; border-radius:6px; padding:3px 8px;
+    font-size:12px; font-weight:700; flex:none; margin-top:4px;
+  }
+  .section-body{padding:16px;}
+  .finding{
+    border-left:3px solid var(--amber); background:#FCFAF4; border-radius:0 8px 8px 0;
+    padding:12px 14px; margin-bottom:12px;
+  }
+  .finding-head{display:flex; gap:10px; align-items:center; margin-bottom:8px;}
+  .finding-num{
+    font-family:var(--mono); font-weight:700; color:var(--amber-dark); font-size:13px;
+    background:#FBEFDA; padding:3px 8px; border-radius:6px; min-width:54px; text-align:center;
+  }
+  .thumbs{display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;}
+  .thumb{
+    position:relative; width:74px; height:74px; border-radius:7px; overflow:hidden; border:1px solid var(--line);
+  }
+  .thumb img{width:100%; height:100%; object-fit:cover; display:block;}
+  .thumb .rm{
+    position:absolute; top:2px; right:2px; background:rgba(20,20,20,.65); color:#fff; border:none;
+    width:18px; height:18px; border-radius:50%; font-size:11px; line-height:1; padding:0; cursor:pointer;
+  }
+  .row-actions{display:flex; gap:8px; justify-content:flex-end; margin-top:6px;}
+  .table-editor table{width:100%; border-collapse:collapse; margin-top:8px; font-size:12.5px;}
+  .table-editor th, .table-editor td{border:1px solid var(--line); padding:4px;}
+  .table-editor input{border:none; width:100%; padding:4px; font-size:12.5px; background:transparent;}
+  .table-editor input:focus{outline:1px solid var(--amber);}
+  .dashed-add{
+    width:100%; border:1.5px dashed #B9C2CA; background:transparent; color:var(--ink-soft);
+    padding:10px; border-radius:8px; font-weight:600; font-size:13px;
+  }
+  .dashed-add:hover{border-color:var(--amber-dark); color:var(--amber-dark); background:#FFFBF2;}
+  .sign-row{display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; margin-bottom:8px;}
+  footer.note{color:var(--ink-soft); font-size:11.5px; text-align:center; margin-top:30px; line-height:1.6;}
+  .status-pill{
+    font-size:11px; color:#C9D6E0; font-family:var(--mono); align-self:center;
+  }
+  .empty-hint{color:var(--ink-soft); font-size:12.5px; font-style:italic; padding:6px 0;}
+  .icon-btn{background:transparent; border:none; color:var(--ink-soft); font-size:16px; padding:2px 6px;}
+  .icon-btn:hover{color:var(--danger);}
+  .toast{
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--navy); color:#fff;
+    padding:10px 18px; border-radius:8px; font-size:13px; box-shadow:0 6px 20px rgba(0,0,0,.25);
+    z-index:100; opacity:0; pointer-events:none; transition:opacity .25s ease, transform .25s ease;
+  }
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(-4px);}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="mark">АКТ</div>
+    <div>
+      <h1>Генератор актов проверки ЭТД</h1>
+      <p>Акт проверки (Word) + План устранения замечаний (Excel)</p>
+    </div>
+  </div>
+  <div class="actions">
+    <span class="status-pill" id="statusPill">черновик не сохранён</span>
+    <button class="btn-ghost btn-sm" id="btnNewAct">Новый акт</button>
+    <button class="btn-outline" id="btnGenDocx">Скачать Акт (Word)</button>
+    <button class="btn-amber" id="btnGenXlsx">Скачать План (Excel)</button>
+  </div>
+</div>
+
+<main>
+  <p class="lede">Заполните карточку акта: вводную часть, разделы проверки с замечаниями и фотографиями. Из тех же замечаний
+  автоматически формируется параллельный план мероприятий по устранению — по одной кнопке получаете оба документа,
+  готовых к скачиванию и печати.</p>
+
+  <div class="card" id="metaCard">
+    <h2>1 · Титул и вводная часть акта</h2>
+    <p class="sub">Эти поля формируют заголовок, дату/место и вступительный абзац акта.</p>
+    <div id="metaFields"></div>
+  </div>
+
+  <div class="card" id="sectionsCard">
+    <h2>2 · Разделы проверки и замечания</h2>
+    <p class="sub">Каждый раздел — это блок проверки (например «Осмотр ПСУ», «Охрана труда», «Санитарно-бытовые условия»).
+    Внутри раздела добавляйте замечания — они попадут и в акт, и в план устранения.</p>
+    <div id="sectionsContainer"></div>
+    <button class="dashed-add" id="addSectionBtn">+ Добавить раздел проверки</button>
+  </div>
+
+  <div class="card" id="conclusionCard">
+    <h2>3 · Вывод и срок устранения</h2>
+    <div class="field" style="margin-bottom:14px;">
+      <span>Вывод по результатам проверки</span>
+      <textarea class="input textarea" id="conclusionInput" rows="4"></textarea>
+    </div>
+    <div class="field">
+      <span>Итоговое поручение по срокам</span>
+      <input class="input" id="deadlineNoteInput" type="text">
+    </div>
+  </div>
+
+  <div class="card" id="signCard">
+    <h2>4 · Подписи комиссии (акт)</h2>
+    <p class="sub">Должность и Ф.И.О. — построчно, как в подписи под актом.</p>
+    <div id="signatoriesContainer"></div>
+    <button class="dashed-add" id="addSignBtn">+ Добавить подписанта</button>
+  </div>
+
+  <div class="card" id="planMetaCard">
+    <h2>5 · Гриф плана устранения (Excel)</h2>
+    <p class="sub">Строки «СОГЛАСОВАНО / УТВЕРЖДАЮ» в шапке плана мероприятий.</p>
+    <div class="grid">
+      <label class="field"><span>СОГЛАСОВАНО — должность</span><input class="input" id="planAgreedPosition"></label>
+      <label class="field"><span>СОГЛАСОВАНО — Ф.И.О.</span><input class="input" id="planAgreedName"></label>
+      <label class="field"><span>УТВЕРЖДАЮ — должность</span><input class="input" id="planApprovedPosition"></label>
+      <label class="field"><span>УТВЕРЖДАЮ — Ф.И.О.</span><input class="input" id="planApprovedName"></label>
+    </div>
+  </div>
+
+  <footer class="note">
+    Фотографии хранятся только в этой вкладке браузера и не сохраняются между сеансами — добавьте их непосредственно
+    перед скачиванием акта. Текстовые поля черновика сохраняются автоматически.
+  </footer>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================= STATE ============================= */
+let uidCounter = 1;
+function uid(){ return 'id' + (uidCounter++) + '_' + Math.random().toString(36).slice(2,7); }
+
+function defaultState(){
+  return {
+    meta:{
+      subdivisionType:'ЛТУ',
+      subdivisionName:'',
+      period:'2025–2026',
+      date:'',
+      location:'',
+      introText:'Нами, в составе ведущего инженера электросвязи ОЭСТ ______________, начальника ЦТО МС ______________, '
+        + 'ведущего инженера электросвязи ГПРиКК ______________, на основании плана ЭТД 2026 года, в присутствии '
+        + 'ответственных руководителей проведена проверка эксплуатационно-технической деятельности.',
+    },
+    sections:[],
+    conclusion:'',
+    deadlineNote:'По выявленным замечаниям в срок до __.__.20__ года составить план-график по устранению выявленных '
+      + 'несоответствий по указанным замечаниям.',
+    signatories:[
+      {id:uid(), position:'Ведущий инженер ОЭСТ', name:''},
+      {id:uid(), position:'Начальник ЦТО МС', name:''}
+    ],
+    plan:{
+      agreedPosition:'Начальник', agreedName:'',
+      approvedPosition:'Директор ДЭСД', approvedName:''
+    }
+  };
+}
+
+let state = defaultState();
+
+/* ============================= STORAGE (autosave, text only) ============================= */
+let saveTimer = null;
+function scheduleSave(){
+  const pill = document.getElementById('statusPill');
+  pill.textContent = 'сохранение…';
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async ()=>{
+    try{
+      const strip = JSON.parse(JSON.stringify(state));
+      strip.sections.forEach(s => s.findings.forEach(f => { f.photos = []; }));
+      if (window.storage && window.storage.set){
+        await window.storage.set('act_draft_v1', JSON.stringify(strip), false);
+      }
+      pill.textContent = 'черновик сохранён · ' + new Date().toLocaleTimeString('ru-RU');
+    }catch(e){
+      pill.textContent = 'черновик не сохранён (слишком большой)';
+    }
+  }, 700);
+}
+
+async function loadDraft(){
+  try{
+    if (window.storage && window.storage.get){
+      const res = await window.storage.get('act_draft_v1', false);
+      if (res && res.value){
+        const parsed = JSON.parse(res.value);
+        parsed.sections.forEach(s => s.findings.forEach(f => { f.photos = f.photos || []; }));
+        state = parsed;
+        return true;
+      }
+    }
+  }catch(e){ /* no saved draft yet */ }
+  return false;
+}
+
+/* ============================= DOM HELPERS ============================= */
+function el(tag, props={}, children=[]){
+  const e = document.createElement(tag);
+  for (const [k,v] of Object.entries(props)){
+    if (k === 'class') e.className = v;
+    else if (k === 'html') e.innerHTML = v;
+    else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (v !== undefined && v !== null) e.setAttribute(k, v);
+  }
+  (Array.isArray(children) ? children : [children]).forEach(c=>{
+    if (c === null || c === undefined) return;
+    if (typeof c === 'string') e.appendChild(document.createTextNode(c));
+    else e.appendChild(c);
+  });
+  return e;
+}
+function labeled(labelText, inputEl){
+  return el('label', {class:'field'}, [el('span', {}, labelText), inputEl]);
+}
+function textInput(value, onInput, placeholder){
+  const i = el('input', {type:'text', class:'input', placeholder: placeholder || ''});
+  i.value = value || '';
+  i.addEventListener('input', e => { onInput(e.target.value); scheduleSave(); });
+  return i;
+}
+function textareaInput(value, onInput, rows, placeholder){
+  const t = el('textarea', {class:'input textarea', rows: rows || 3, placeholder: placeholder || ''});
+  t.value = value || '';
+  t.addEventListener('input', e => { onInput(e.target.value); scheduleSave(); });
+  return t;
+}
+function dateInput(value, onInput){
+  const i = el('input', {type:'date', class:'input'});
+  i.value = value || '';
+  i.addEventListener('input', e => { onInput(e.target.value); scheduleSave(); });
+  return i;
+}
+function selectInput(value, options, onInput){
+  const s = el('select', {class:'input'});
+  options.forEach(opt => {
+    const o = el('option', {value: opt}, opt);
+    if (opt === value) o.setAttribute('selected','selected');
+    s.appendChild(o);
+  });
+  s.addEventListener('change', e => { onInput(e.target.value); scheduleSave(); });
+  return s;
+}
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=> t.classList.remove('show'), 2600);
+}
+function formatDateHuman(iso){
+  if (!iso) return '__.__.____';
+  const [y,m,d] = iso.split('-');
+  if (!y) return '__.__.____';
+  return `${d}.${m}.${y}`;
+}
+
+/* ============================= META RENDER (built once) ============================= */
+function renderMeta(){
+  const wrap = document.getElementById('metaFields');
+  wrap.innerHTML = '';
+  const g1 = el('div', {class:'grid3'});
+  g1.appendChild(labeled('Тип подразделения', selectInput(state.meta.subdivisionType,
+    ['ЛТЦ','ЛТУ','ЦТО МС','Цех','Участок','ДЭСД','Другое'], v => state.meta.subdivisionType = v)));
+  g1.appendChild(labeled('Наименование (например «Мартукского района»)',
+    textInput(state.meta.subdivisionName, v => state.meta.subdivisionName = v, 'Мартукского района')));
+  g1.appendChild(labeled('Период проверки', textInput(state.meta.period, v => state.meta.period = v, '2025–2026')));
+  wrap.appendChild(g1);
+
+  const g2 = el('div', {class:'grid3', style:'margin-top:14px;'});
+  g2.appendChild(labeled('Дата акта', dateInput(state.meta.date, v => state.meta.date = v)));
+  g2.appendChild(labeled('Место (населённый пункт)', textInput(state.meta.location, v => state.meta.location = v, 'п. Мартук')));
+  wrap.appendChild(g2);
+
+  const g3 = el('div', {style:'margin-top:14px;'});
+  g3.appendChild(labeled('Вводная часть акта (состав комиссии, основание проверки)',
+    textareaInput(state.meta.introText, v => state.meta.introText = v, 4)));
+  wrap.appendChild(g3);
+}
+
+/* ============================= SECTIONS RENDER ============================= */
+function addSection(){
+  state.sections.push({ id: uid(), title:'', description:'', table:null, findings:[] });
+  renderSections();
+  scheduleSave();
+}
+function removeSection(sec){
+  if (!confirm('Удалить раздел «' + (sec.title || 'без названия') + '» вместе со всеми замечаниями?')) return;
+  state.sections = state.sections.filter(s => s.id !== sec.id);
+  renderSections();
+  scheduleSave();
+}
+function addFinding(sec){
+  const idx = state.sections.indexOf(sec);
+  sec.findings.push({
+    id: uid(),
+    number: (idx+1) + '.' + (sec.findings.length+1),
+    object:'', description:'', responsible:'', deadline:'', photos:[]
+  });
+  renderSections();
+  scheduleSave();
+}
+function removeFinding(sec, f){
+  sec.findings = sec.findings.filter(x => x.id !== f.id);
+  renderSections();
+  scheduleSave();
+}
+function addTable(sec){
+  sec.table = { headers:['Показатель','План','Факт'], rows:[['','','']] };
+  renderSections();
+  scheduleSave();
+}
+function removeTable(sec){
+  sec.table = null;
+  renderSections();
+  scheduleSave();
+}
+
+function renderSections(){
+  const container = document.getElementById('sectionsContainer');
+  container.innerHTML = '';
+  if (state.sections.length === 0){
+    container.appendChild(el('p', {class:'empty-hint'}, 'Разделов пока нет — добавьте первый раздел проверки.'));
+  }
+  state.sections.forEach((sec, idx) => {
+    container.appendChild(renderSectionCard(sec, idx));
+  });
+}
+
+function renderSectionCard(sec, idx){
+  const block = el('div', {class:'section-block'});
+
+  const head = el('div', {class:'section-head'});
+  head.appendChild(el('div', {class:'section-badge'}, String(idx+1)));
+  const headMain = el('div', {style:'flex:1;'});
+  headMain.appendChild(textInput(sec.title, v => sec.title = v, 'Название раздела, например «Осмотр ПСУ и ККС»'));
+  head.appendChild(headMain);
+  head.appendChild(el('button', {class:'icon-btn', title:'Удалить раздел', onClick: () => removeSection(sec)}, '✕'));
+  block.appendChild(head);
+
+  const body = el('div', {class:'section-body'});
+
+  body.appendChild(labeled('Краткое описание раздела (необязательно)',
+    textareaInput(sec.description, v => sec.description = v, 2, 'Например: осмотрены объекты ПСУ, подтверждено выполнение ППР…')));
+
+  // --- optional stats table ---
+  const tableWrap = el('div', {style:'margin-top:12px;'});
+  if (sec.table){
+    tableWrap.appendChild(renderTableEditor(sec));
+  } else {
+    tableWrap.appendChild(el('button', {class:'dashed-add', onClick: () => addTable(sec)},
+      '+ Добавить таблицу показателей (план/факт)'));
+  }
+  body.appendChild(tableWrap);
+
+  // --- findings ---
+  const findingsHeader = el('div', {style:'display:flex; justify-content:space-between; align-items:center; margin-top:18px;'});
+  findingsHeader.appendChild(el('strong', {style:'font-size:13.5px; color:var(--navy);'}, 'Замечания раздела'));
+  body.appendChild(findingsHeader);
+
+  if (sec.findings.length === 0){
+    body.appendChild(el('p', {class:'empty-hint'}, 'Замечаний нет — добавьте первое.'));
+  }
+  sec.findings.forEach(f => body.appendChild(renderFinding(sec, f)));
+
+  body.appendChild(el('button', {class:'dashed-add', style:'margin-top:6px;', onClick: () => addFinding(sec)},
+    '+ Добавить замечание'));
+
+  block.appendChild(body);
+  return block;
+}
+
+function renderTableEditor(sec){
+  const wrap = el('div', {class:'table-editor'});
+  wrap.appendChild(el('div', {style:'display:flex; justify-content:space-between; align-items:center;'}, [
+    el('strong', {style:'font-size:12.5px; color:var(--ink-soft);'}, 'Таблица показателей'),
+    el('button', {class:'icon-btn', title:'Удалить таблицу', onClick: () => removeTable(sec)}, '✕')
+  ]));
+  const table = el('table');
+  const thead = el('tr');
+  sec.table.headers.forEach((h, ci) => {
+    const th = el('th');
+    th.appendChild(el('input', {value:h, oninput: null}));
+    th.querySelector('input').addEventListener('input', e => { sec.table.headers[ci] = e.target.value; scheduleSave(); });
+    thead.appendChild(th);
+  });
+  const thRm = el('th', {style:'width:1%;'});
+  thRm.appendChild(el('button', {class:'icon-btn btn-sm', title:'Добавить столбец', onClick: () => {
+    sec.table.headers.push('Столбец');
+    sec.table.rows.forEach(r => r.push(''));
+    renderSections();
+  }}, '+col'));
+  thead.appendChild(thRm);
+  table.appendChild(thead);
+
+  sec.table.rows.forEach((row, ri) => {
+    const tr = el('tr');
+    row.forEach((cellVal, ci) => {
+      const td = el('td');
+      const inp = el('input', {value: cellVal});
+      inp.addEventListener('input', e => { sec.table.rows[ri][ci] = e.target.value; scheduleSave(); });
+      td.appendChild(inp);
+      tr.appendChild(td);
+    });
+    const tdRm = el('td');
+    tdRm.appendChild(el('button', {class:'icon-btn btn-sm', title:'Удалить строку', onClick: () => {
+      sec.table.rows.splice(ri,1);
+      renderSections();
+      scheduleSave();
+    }}, '✕'));
+    tr.appendChild(tdRm);
+    table.appendChild(tr);
+  });
+  wrap.appendChild(table);
+  wrap.appendChild(el('button', {class:'dashed-add', style:'margin-top:8px;', onClick: () => {
+    sec.table.rows.push(sec.table.headers.map(()=>''));
+    renderSections();
+    scheduleSave();
+  }}, '+ Добавить строку'));
+  return wrap;
+}
+
+function renderFinding(sec, f){
+  const wrap = el('div', {class:'finding'});
+  const head = el('div', {class:'finding-head'});
+  const numInput = el('input', {class:'finding-num', value: f.number, style:'border:none;'});
+  numInput.addEventListener('input', e => { f.number = e.target.value; scheduleSave(); });
+  head.appendChild(numInput);
+  const objInput = textInput(f.object, v => f.object = v, 'Объект, например «ККС №310» или «ШР 2102»');
+  objInput.style.flex = '1';
+  head.appendChild(objInput);
+  head.appendChild(el('button', {class:'icon-btn', title:'Удалить замечание', onClick: () => removeFinding(sec, f)}, '✕'));
+  wrap.appendChild(head);
+
+  wrap.appendChild(textareaInput(f.description, v => f.description = v, 2, 'Текст замечания, например «Требуется увязка кабеля»'));
+
+  const g = el('div', {class:'grid', style:'margin-top:8px;'});
+  g.appendChild(labeled('Ответственный исполнитель', textInput(f.responsible, v => f.responsible = v, 'Ф.И.О., должность')));
+  g.appendChild(labeled('Срок устранения', dateInput(f.deadline, v => f.deadline = v)));
+  wrap.appendChild(g);
+
+  // photos
+  const photoWrap = el('div', {style:'margin-top:10px;'});
+  const fileId = 'file_' + f.id;
+  const fileLabel = el('label', {class:'btn-outline', for: fileId, style:'display:inline-block; cursor:pointer;'}, '📷 Добавить фото');
+  const fileInput = el('input', {type:'file', id:fileId, accept:'image/*', multiple:'multiple', style:'display:none;'});
+  fileInput.addEventListener('change', e => {
+    handleFiles(f, e.target.files, () => { renderSections(); scheduleSave(); });
+    e.target.value = '';
+  });
+  photoWrap.appendChild(fileLabel);
+  photoWrap.appendChild(fileInput);
+
+  if (f.photos.length){
+    const thumbs = el('div', {class:'thumbs'});
+    f.photos.forEach(p => {
+      const t = el('div', {class:'thumb'});
+      t.appendChild(el('img', {src:p.dataUrl, alt:p.name}));
+      t.appendChild(el('button', {class:'rm', title:'Удалить фото', onClick: () => {
+        f.photos = f.photos.filter(x => x.id !== p.id);
+        renderSections();
+        scheduleSave();
+      }}, '✕'));
+      thumbs.appendChild(t);
+    });
+    photoWrap.appendChild(thumbs);
+  }
+  wrap.appendChild(photoWrap);
+
+  return wrap;
+}
+
+function handleFiles(finding, fileList, onDone){
+  const files = Array.from(fileList || []);
+  if (files.length === 0){ onDone(); return; }
+  let remaining = files.length;
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      const img = new Image();
+      img.onload = () => {
+        finding.photos.push({
+          id: uid(), name: file.name, mime: file.type || 'image/jpeg',
+          dataUrl, width: img.naturalWidth || 800, height: img.naturalHeight || 600
+        });
+        remaining--; if (remaining === 0) onDone();
+      };
+      img.onerror = () => { remaining--; if (remaining === 0) onDone(); };
+      img.src = dataUrl;
+    };
+    reader.onerror = () => { remaining--; if (remaining === 0) onDone(); };
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ============================= SIGNATORIES RENDER ============================= */
+function renderSignatories(){
+  const wrap = document.getElementById('signatoriesContainer');
+  wrap.innerHTML = '';
+  state.signatories.forEach((s, i) => {
+    const row = el('div', {class:'sign-row'});
+    row.appendChild(labeled('Должность', textInput(s.position, v => s.position = v, 'Должность')));
+    row.appendChild(labeled('Ф.И.О.', textInput(s.name, v => s.name = v, 'Фамилия И.О.')));
+    row.appendChild(el('button', {class:'icon-btn', title:'Удалить', onClick: () => {
+      state.signatories.splice(i,1);
+      renderSignatories();
+      scheduleSave();
+    }}, '✕'));
+    wrap.appendChild(row);
+  });
+}
+document.getElementById('addSignBtn').addEventListener('click', () => {
+  state.signatories.push({id:uid(), position:'', name:''});
+  renderSignatories();
+  scheduleSave();
+});
+
+/* ============================= CONCLUSION + PLAN META RENDER ============================= */
+function renderConclusion(){
+  document.getElementById('conclusionInput').value = state.conclusion || '';
+  document.getElementById('conclusionInput').addEventListener('input', e => { state.conclusion = e.target.value; scheduleSave(); });
+  document.getElementById('deadlineNoteInput').value = state.deadlineNote || '';
+  document.getElementById('deadlineNoteInput').addEventListener('input', e => { state.deadlineNote = e.target.value; scheduleSave(); });
+}
+function renderPlanMeta(){
+  const ids = ['planAgreedPosition','planAgreedName','planApprovedPosition','planApprovedName'];
+  const map = {
+    planAgreedPosition:'agreedPosition', planAgreedName:'agreedName',
+    planApprovedPosition:'approvedPosition', planApprovedName:'approvedName'
+  };
+  ids.forEach(id => {
+    const inp = document.getElementById(id);
+    inp.value = state.plan[map[id]] || '';
+    inp.addEventListener('input', e => { state.plan[map[id]] = e.target.value; scheduleSave(); });
+  });
+}
+
+/* ============================= FULL RENDER / RESET ============================= */
+function renderAll(){
+  renderMeta();
+  renderSections();
+  renderSignatories();
+  renderConclusion();
+  renderPlanMeta();
+}
+
+document.getElementById('addSectionBtn').addEventListener('click', addSection);
+document.getElementById('btnNewAct').addEventListener('click', () => {
+  if (!confirm('Начать новый акт? Текущий черновик будет заменён (фото и текст).')) return;
+  state = defaultState();
+  renderAll();
+  scheduleSave();
+  toast('Создан новый черновик акта');
+});
+
+/* ============================= OOXML (.docx) BUILDER ============================= */
+function escapeXml(str){
+  return String(str ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+}
+function textRuns(text, rPrXml){
+  const lines = String(text ?? '').split(/\r?\n/);
+  return lines.map((line, i) => {
+    const br = i > 0 ? '<w:br/>' : '';
+    return `${br}<w:r>${rPrXml}<w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r>`;
+  }).join('');
+}
+function paragraph(text, opts = {}){
+  const { bold=false, italic=false, size=24, align='both', spacingAfter=160, spacingBefore=0, color=null } = opts;
+  let rPr = '<w:rPr>';
+  if (bold) rPr += '<w:b/>';
+  if (italic) rPr += '<w:i/>';
+  if (color) rPr += `<w:color w:val="${color}"/>`;
+  rPr += `<w:sz w:val="${size}"/><w:szCs w:val="${size}"/></w:rPr>`;
+  const jc = align ? `<w:jc w:val="${align}"/>` : '';
+  const runs = text === '' ? '' : textRuns(text, rPr);
+  return `<w:p><w:pPr>${jc}<w:spacing w:before="${spacingBefore}" w:after="${spacingAfter}" w:line="276" w:lineRule="auto"/></w:pPr>${runs}</w:p>`;
+}
+function heading(text, level=1, align='center'){
+  const size = level === 1 ? 28 : level === 2 ? 25 : 24;
+  return paragraph(text, { bold:true, size, align, spacingAfter:200 });
+}
+function cellXml(text, width, isHeader){
+  const shd = isHeader ? '<w:shd w:val="clear" w:color="auto" w:fill="E7EEF3"/>' : '';
+  const p = paragraph(text, { bold:isHeader, size:20, align:'center', spacingAfter:40 });
+  return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${shd}<w:vAlign w:val="center"/></w:tcPr>${p}</w:tc>`;
+}
+function tableXml(headers, rows){
+  const totalW = 9638;
+  const n = headers.length;
+  const widths = new Array(n).fill(Math.floor(totalW / n));
+  const borders = `<w:tblBorders>
+    <w:top w:val="single" w:sz="4" w:space="0" w:color="333333"/>
+    <w:left w:val="single" w:sz="4" w:space="0" w:color="333333"/>
+    <w:bottom w:val="single" w:sz="4" w:space="0" w:color="333333"/>
+    <w:right w:val="single" w:sz="4" w:space="0" w:color="333333"/>
+    <w:insideH w:val="single" w:sz="4" w:space="0" w:color="333333"/>
+    <w:insideV w:val="single" w:sz="4" w:space="0" w:color="333333"/>
+  </w:tblBorders>`;
+  const grid = widths.map(w => `<w:gridCol w:w="${w}"/>`).join('');
+  const headerRow = `<w:tr>${headers.map((h,i)=>cellXml(h,widths[i],true)).join('')}</w:tr>`;
+  const bodyRows = rows.map(r => `<w:tr>${r.map((c,i)=>cellXml(c,widths[i],false)).join('')}</w:tr>`).join('');
+  return `<w:tbl><w:tblPr><w:tblW w:w="${totalW}" w:type="dxa"/>${borders}<w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${headerRow}${bodyRows}</w:tbl><w:p/>`;
+}
+function emuFromPx(px){ return Math.round(px * 9525); }
+function imageParagraphXml(relId, pxWidth, pxHeight, maxCx){
+  let cx = emuFromPx(pxWidth), cy = emuFromPx(pxHeight);
+  const cap = maxCx || 3600000;
+  if (cx > cap){ const scale = cap / cx; cx = cap; cy = Math.round(cy * scale); }
+  const id = Math.floor(Math.random() * 1000000);
+  return `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="160"/></w:pPr><w:r><w:drawing>
+  <wp:inline distT="0" distB="0" distL="0" distR="0">
+    <wp:extent cx="${cx}" cy="${cy}"/>
+    <wp:effectExtent l="0" t="0" r="0" b="0"/>
+    <wp:docPr id="${id}" name="Picture${id}"/>
+    <wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>
+    <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+      <pic:pic>
+        <pic:nvPicPr><pic:cNvPr id="${id}" name="Picture${id}"/><pic:cNvPicPr/></pic:nvPicPr>
+        <pic:blipFill><a:blip r:embed="${relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
+        <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
+      </pic:pic>
+    </a:graphicData></a:graphic>
+  </wp:inline>
+</w:drawing></w:r></w:p>`;
+}
+function dataUrlToBytes(dataUrl){
+  const base64 = dataUrl.split(',')[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i=0;i<binary.length;i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+function extFromMime(mime){
+  if (/png/.test(mime)) return 'png';
+  if (/gif/.test(mime)) return 'gif';
+  return 'jpeg';
+}
+function documentXml(bodyXml){
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+<w:body>
+${bodyXml}
+<w:sectPr>
+  <w:pgSz w:w="11906" w:h="16838"/>
+  <w:pgMar w:top="1134" w:right="850" w:bottom="1134" w:left="1701" w:header="708" w:footer="708" w:gutter="0"/>
+</w:sectPr>
+</w:body>
+</w:document>`;
+}
+function stylesXml(){
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+ <w:docDefaults>
+  <w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="ru-RU"/></w:rPr></w:rPrDefault>
+ </w:docDefaults>
+ <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+</w:styles>`;
+}
+function coreXml(title){
+  const now = new Date().toISOString();
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<dc:title>${escapeXml(title)}</dc:title>
+<dc:creator>Генератор актов</dc:creator>
+<cp:lastModifiedBy>Генератор актов</cp:lastModifiedBy>
+<dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created>
+<dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified>
+</cp:coreProperties>`;
+}
+function appXml(){
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">
+<Application>Act Generator</Application>
+</Properties>`;
+}
+function rootRelsXml(){
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+ <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+ <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+ <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>`;
+}
+function documentRelsXml(mediaFiles){
+  const imgRels = mediaFiles.map(m => `<Relationship Id="${m.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${m.filename}"/>`).join('\n');
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+ <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+ ${imgRels}
+</Relationships>`;
+}
+function contentTypesXml(mediaFiles){
+  const exts = Array.from(new Set(mediaFiles.map(m => extFromMime(m.mime))));
+  const defaults = exts.map(ext => `<Default Extension="${ext}" ContentType="image/${ext === 'jpeg' ? 'jpeg' : ext}"/>`).join('\n');
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+ <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+ <Default Extension="xml" ContentType="application/xml"/>
+ ${defaults}
+ <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+ <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+ <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+ <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>`;
+}
+
+function sanitizeFilename(s){
+  return String(s || '').replace(/[^\p{L}\p{N}_\-]+/gu, '_').replace(/_+/g,'_').replace(/^_|_$/g,'');
+}
+
+async function generateDocx(){
+  if (!state.meta.subdivisionName || !state.meta.date){
+    toast('Укажите наименование подразделения и дату акта (раздел 1)');
+    return;
+  }
+  const meta = state.meta;
+  const parts = [];
+  const title = `Акт проверки эксплуатационно-технической деятельности ${meta.subdivisionType} ${meta.subdivisionName} за ${meta.period} год`;
+  parts.push(heading(title, 1));
+  parts.push(paragraph(`«${formatDateHuman(meta.date)}» г.`, { align:'center', size:22, spacingAfter:40 }));
+  if (meta.location) parts.push(paragraph(meta.location, { align:'center', size:22, spacingAfter:200 }));
+  parts.push(heading('Акт', 2));
+  parts.push(paragraph(meta.introText, { align:'both' }));
+
+  let mediaFiles = [];
+  let relCounter = 2;
+
+  state.sections.forEach((sec, idx) => {
+    parts.push(heading(`${idx+1}. ${sec.title || 'Раздел проверки'}`, 3, 'left'));
+    if (sec.description) parts.push(paragraph(sec.description, { align:'both' }));
+    if (sec.table && sec.table.headers.length){
+      parts.push(tableXml(sec.table.headers, sec.table.rows));
+    }
+    if (sec.findings.length){
+      parts.push(paragraph('Замечания:', { bold:true, align:'left', spacingAfter:80 }));
+      sec.findings.forEach(f => {
+        const objTxt = f.object ? f.object + ' — ' : '';
+        parts.push(paragraph(`${f.number}. ${objTxt}${f.description}`, { align:'both', spacingAfter:60 }));
+        const respLine = `Ответственный: ${f.responsible || '—'}    Срок устранения: ${formatDateHuman(f.deadline)}`;
+        parts.push(paragraph(respLine, { italic:true, size:20, align:'left', spacingAfter:100 }));
+        f.photos.forEach(p => {
+          const ext = extFromMime(p.mime);
+          const filename = `image${relCounter}.${ext}`;
+          const relId = `rId${relCounter}`;
+          relCounter++;
+          mediaFiles.push({ relId, filename, mime:p.mime, bytes: dataUrlToBytes(p.dataUrl) });
+          parts.push(imageParagraphXml(relId, p.width, p.height, 3600000));
+        });
+      });
+    }
+  });
+
+  parts.push(heading('Вывод:', 3, 'left'));
+  parts.push(paragraph(state.conclusion || '—', { align:'both' }));
+  if (state.deadlineNote){
+    parts.push(paragraph(state.deadlineNote, { italic:true, align:'both', spacingBefore:100 }));
+  }
+  parts.push(paragraph('', { spacingAfter:200 }));
+  state.signatories.forEach(s => {
+    if (!s.position && !s.name) return;
+    parts.push(paragraph(`${s.position}   _______________   ${s.name}`, { align:'left', spacingAfter:120 }));
+  });
+
+  const bodyXml = parts.join('\n');
+  const zip = new JSZip();
+  zip.file('[Content_Types].xml', contentTypesXml(mediaFiles));
+  zip.file('_rels/.rels', rootRelsXml());
+  zip.file('word/document.xml', documentXml(bodyXml));
+  zip.file('word/styles.xml', stylesXml());
+  zip.file('word/_rels/document.xml.rels', documentRelsXml(mediaFiles));
+  zip.file('docProps/core.xml', coreXml(title));
+  zip.file('docProps/app.xml', appXml());
+  const mediaFolder = zip.folder('word/media');
+  mediaFiles.forEach(m => mediaFolder.file(m.filename, m.bytes));
+
+  const blob = await zip.generateAsync({ type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  const fname = `Akt_${sanitizeFilename(meta.subdivisionType)}_${sanitizeFilename(meta.subdivisionName)}_${meta.date}.docx`;
+  saveAs(blob, fname);
+  toast('Акт сформирован: ' + fname);
+}
+
+/* ============================= XLSX (plan) BUILDER ============================= */
+function generateXlsx(){
+  if (!state.meta.subdivisionName || !state.meta.date){
+    toast('Укажите наименование подразделения и дату акта (раздел 1)');
+    return;
+  }
+  const meta = state.meta, plan = state.plan;
+  const rows = [];
+  const merges = [];
+
+  rows.push(['СОГЛАСОВАНО','','','','','УТВЕРЖДАЮ','']);
+  rows.push([`${plan.agreedPosition || ''} ______________ ${plan.agreedName || ''}`,'','','','',
+              `${plan.approvedPosition || ''} ______________ ${plan.approvedName || ''}`,'']);
+  rows.push(['«____»____________ 20__ г.','','','','','«____»____________ 20__ г.','']);
+  rows.push(['','','','','','','']);
+  merges.push({s:{r:0,c:0},e:{r:0,c:3}}, {s:{r:0,c:5},e:{r:0,c:6}});
+  merges.push({s:{r:1,c:0},e:{r:1,c:3}}, {s:{r:1,c:5},e:{r:1,c:6}});
+  merges.push({s:{r:2,c:0},e:{r:2,c:3}}, {s:{r:2,c:5},e:{r:2,c:6}});
+
+  const titleRow = rows.length;
+  rows.push([`План мероприятий по устранению замечаний, выявленных в ходе проверки ЭТД ${meta.subdivisionType} ${meta.subdivisionName}. Акт от ${formatDateHuman(meta.date)} г.`,'','','','','','']);
+  merges.push({s:{r:titleRow,c:0},e:{r:titleRow,c:6}});
+  rows.push(['','','','','','','']);
+
+  const headerRow = rows.length;
+  rows.push(['№ п/п','№ по акту','Выявленные замечания','Срок устранения','Ответственный исполнитель (Ф.И.О., должность)','Отметка о выполнении (да/нет)','Примечание']);
+
+  let n = 1;
+  state.sections.forEach(sec => {
+    if (!sec.findings.length) return;
+    const grpRow = rows.length;
+    rows.push([sec.title || 'Раздел','','','','','','']);
+    merges.push({s:{r:grpRow,c:0},e:{r:grpRow,c:6}});
+    sec.findings.forEach(f => {
+      const text = (f.object ? f.object + ' — ' : '') + (f.description || '');
+      rows.push([n++, f.number, text, formatDateHuman(f.deadline), f.responsible || '', '', '']);
+    });
+  });
+
+  if (n === 1){
+    rows.push(['','','Замечания не заданы — добавьте их в разделах акта','','','','']);
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{wch:6},{wch:10},{wch:55},{wch:14},{wch:30},{wch:16},{wch:18}];
+  ws['!merges'] = merges;
+  ws['!rows'] = rows.map((_, i) => (i === headerRow ? {hpt:32} : undefined));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'План устранения');
+  const wbout = XLSX.write(wb, { bookType:'xlsx', type:'array' });
+  const blob = new Blob([wbout], { type:'application/octet-stream' });
+  const fname = `Plan_ustraneniya_${sanitizeFilename(meta.subdivisionType)}_${sanitizeFilename(meta.subdivisionName)}_${meta.date}.xlsx`;
+  saveAs(blob, fname);
+  toast('План устранения сформирован: ' + fname);
+}
+
+document.getElementById('btnGenDocx').addEventListener('click', () => generateDocx().catch(e => { console.error(e); toast('Ошибка при создании акта: ' + e.message); }));
+document.getElementById('btnGenXlsx').addEventListener('click', () => { try{ generateXlsx(); }catch(e){ console.error(e); toast('Ошибка при создании плана: ' + e.message); } });
+
+/* ============================= INIT ============================= */
+(async function init(){
+  const had = await loadDraft();
+  renderAll();
+  if (had) toast('Загружен сохранённый черновик');
+})();
+</script>
+</body>
+</html>
