@@ -125,8 +125,8 @@
   .dashed-add:hover{border-color:var(--amber-dark); color:var(--amber-dark); background:#FFFBF2;}
   .ans-btn{border:1px solid var(--line); background:#fff; border-radius:6px; padding:4px 12px; font-size:11.5px; font-weight:700; cursor:pointer; color:var(--ink-soft); font-family:var(--sans);}
   .ans-btn:hover{background:#F3F5F7;}
-  .ans-yes-active{background:#E7F3EA; border-color:var(--ok); color:#2E5E3D;}
-  .ans-no-active{background:#FBEAE8; border-color:var(--danger); color:#8C2F27;}
+  .ans-yes-active{background:#FBEAE8; border-color:var(--danger); color:#8C2F27;}
+  .ans-no-active{background:#E7F3EA; border-color:var(--ok); color:#2E5E3D;}
   .sign-row{display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; margin-bottom:8px;}
   footer.note{color:var(--ink-soft); font-size:11.5px; text-align:center; margin-top:30px; line-height:1.6;}
   .status-pill{
@@ -1335,11 +1335,12 @@ function pushCurrentToBatch(ui, opts){
 // Write one queued object's answers into the target section (findings for 'Нет', checkedOk for 'Да').
 function commitEntryToSection(sec, entry){
   const def = CHECKLISTS[entry.type];
-  if (!def) return { no:0, yes:0 };
-  const noIdx = Object.keys(entry.answers).filter(k => entry.answers[k] === 'no' && typeof def.items[Number(k)] === 'string');
-  const yesIdx = Object.keys(entry.answers).filter(k => entry.answers[k] === 'yes' && typeof def.items[Number(k)] === 'string');
+  if (!def) return { findings:0, ok:0 };
+  // 'Да' confirms the defect statement is true (a violation) -> finding. 'Нет' means it's fine -> checked OK.
+  const problemIdx = Object.keys(entry.answers).filter(k => entry.answers[k] === 'yes' && typeof def.items[Number(k)] === 'string');
+  const okIdx = Object.keys(entry.answers).filter(k => entry.answers[k] === 'no' && typeof def.items[Number(k)] === 'string');
   const secIdx = state.sections.indexOf(sec);
-  noIdx.forEach(k => {
+  problemIdx.forEach(k => {
     sec.findings.push({
       id: uid(),
       number: (secIdx+1) + '.' + (sec.findings.length+1),
@@ -1349,7 +1350,7 @@ function commitEntryToSection(sec, entry){
       photos: (entry.photos[k] || []).slice()
     });
   });
-  yesIdx.forEach(k => {
+  okIdx.forEach(k => {
     const text = (entry.objectRef ? entry.objectRef + ' — ' : '') + def.items[Number(k)];
     const photosToAdd = entry.photos[k] || [];
     const existing = sec.checkedOk.find(x => x.text === text);
@@ -1359,7 +1360,7 @@ function commitEntryToSection(sec, entry){
       sec.checkedOk.push({ id: uid(), text, photos: photosToAdd.slice() });
     }
   });
-  return { no: noIdx.length, yes: yesIdx.length };
+  return { findings: problemIdx.length, ok: okIdx.length };
 }
 function applyChecklistTool(ui){
   // Auto-include whatever object is currently in progress, so the last object doesn't need an extra click.
@@ -1375,11 +1376,11 @@ function applyChecklistTool(ui){
   }
   if (!sec.checkedOk) sec.checkedOk = [];
 
-  let totalNo = 0, totalYes = 0;
+  let totalFindings = 0, totalOk = 0;
   const objectsCount = ui.batch.length;
   ui.batch.forEach(entry => {
     const r = commitEntryToSection(sec, entry);
-    totalNo += r.no; totalYes += r.yes;
+    totalFindings += r.findings; totalOk += r.ok;
   });
 
   ui.batch = [];
@@ -1387,7 +1388,7 @@ function applyChecklistTool(ui){
   ui.targetSectionId = sec.id; // keep pointing at this section so repeated batches land in the same place
   renderAll();
   scheduleSave();
-  toast('Добавлено в раздел «' + (sec.title || '') + '»: объектов — ' + objectsCount + ', замечаний — ' + totalNo + ', осмотрено — ' + totalYes);
+  toast('Добавлено в раздел «' + (sec.title || '') + '»: объектов — ' + objectsCount + ', замечаний — ' + totalFindings + ', осмотрено — ' + totalOk);
 }
 function renderChecklistTool(containerId, ui, allowedTypes){
   const container = document.getElementById(containerId);
@@ -1425,10 +1426,10 @@ function renderChecklistTool(containerId, ui, allowedTypes){
     }}, 'Очистить'));
     queueWrap.appendChild(queueHead);
     ui.batch.forEach((entry, bi) => {
-      const noCount = Object.values(entry.answers).filter(v => v === 'no').length;
-      const yesCount = Object.values(entry.answers).filter(v => v === 'yes').length;
+      const problemCount = Object.values(entry.answers).filter(v => v === 'yes').length;
+      const okCount = Object.values(entry.answers).filter(v => v === 'no').length;
       const row2 = el('div', {style:'display:flex; justify-content:space-between; align-items:center; font-size:12px; padding:4px 0; border-top:1px solid #E7E2D6;'});
-      row2.appendChild(el('span', {}, `${entry.typeLabel}${entry.objectRef ? ' — ' + entry.objectRef : ''} · замечаний: ${noCount}, осмотрено: ${yesCount}`));
+      row2.appendChild(el('span', {}, `${entry.typeLabel}${entry.objectRef ? ' — ' + entry.objectRef : ''} · замечаний: ${problemCount}, осмотрено: ${okCount}`));
       row2.appendChild(el('button', {class:'icon-btn', title:'Убрать объект из очереди', onClick: () => {
         ui.batch.splice(bi, 1);
         renderChecklistTool(containerId, ui, allowedTypes);
@@ -1449,8 +1450,8 @@ function renderChecklistTool(containerId, ui, allowedTypes){
       container.appendChild(filterWrap);
     }
     const legend = el('div', {style:'display:flex; justify-content:flex-end; gap:14px; font-size:11.5px; color:var(--ink-soft); margin-top:8px;'}, [
-      el('span', {}, '«Да» — соответствует / имеется → в акт как «осмотрено, замечаний нет»'),
-      el('span', {}, '«Нет» — не соответствует / отсутствует → станет замечанием')
+      el('span', {}, '«Да» — подтверждено, есть нарушение → станет замечанием'),
+      el('span', {}, '«Нет» — соответствует норме → в акт как «осмотрено, замечаний нет»')
     ]);
     container.appendChild(legend);
     const filterText = (ui.filter || '').trim().toLowerCase();
@@ -1465,7 +1466,7 @@ function renderChecklistTool(containerId, ui, allowedTypes){
     function updateCounter(){
       if (counterEl){
         const c = currentCounts();
-        counterEl.textContent = `Отмечено: «Да» — ${c.yes}, «Нет» — ${c.no}`;
+        counterEl.textContent = `Отмечено: «Да» (замечания) — ${c.yes}, «Нет» (осмотрено) — ${c.no}`;
       }
     }
     items.forEach((entry, idx) => {
