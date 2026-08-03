@@ -155,9 +155,31 @@
   </div>
   <div class="actions">
     <span class="status-pill" id="statusPill">черновик не сохранён</span>
+    <button class="btn-ghost btn-sm" id="btnSync">🔗 Синхронизация</button>
     <button class="btn-ghost btn-sm" id="btnNewAct">Новый акт</button>
     <button class="btn-outline" id="btnGenDocx">Скачать Акт (Word)</button>
     <button class="btn-amber" id="btnGenXlsx">Скачать План (Excel)</button>
+  </div>
+</div>
+
+<div id="syncModalOverlay" style="display:none; position:fixed; inset:0; background:rgba(19,42,62,0.55); z-index:300; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:12px; padding:22px 24px; max-width:420px; width:92%; box-shadow:0 20px 50px rgba(0,0,0,.3);">
+    <h2 style="margin:0 0 6px; font-family:var(--serif); color:var(--navy); font-size:18px;">Синхронизация устройств</h2>
+    <p style="margin:0 0 14px; font-size:12.5px; color:var(--ink-soft); line-height:1.5;">
+      Введите один и тот же код на планшете и на телефоне (например «911») — оба устройства будут показывать
+      один и тот же акт и подтягивать изменения друг друга. Удобно: замечания печатать на планшете, а фото
+      сразу делать на телефоне (камера обычно лучше).
+    </p>
+    <div id="syncCurrentStatus" style="font-size:12.5px; margin-bottom:10px;"></div>
+    <label class="field" style="margin-bottom:14px;">
+      <span>Код синхронизации (цифры/буквы)</span>
+      <input class="input" id="syncCodeInput" type="text" inputmode="numeric" placeholder="например 911" maxlength="12">
+    </label>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button class="btn-outline btn-sm" id="syncCloseBtn">Закрыть</button>
+      <button class="btn-danger-outline btn-sm" id="syncDisconnectBtn">Отключить</button>
+      <button class="btn-amber btn-sm" id="syncConnectBtn">Подключиться</button>
+    </div>
   </div>
 </div>
 
@@ -320,26 +342,40 @@ function migrateState(s){
   return s;
 }
 
-/* ============================= SHARED STORAGE (Google Таблица через Apps Script — как раньше) =============================
-   КАК ЭТО РАБОТАЕТ: одна Google Таблица хранит один черновик (в виде JSON-текста в ячейке A1 листа "draft").
-   Все пользователи, с любого устройства, читают и пишут в эту же таблицу через маленький скрипт-посредник
-   (Google Apps Script, развёрнутый как «Веб-приложение»).
+/* ============================= SHARED STORAGE (Google Таблица через Apps Script) =============================
+   КАК ЭТО РАБОТАЕТ: одна Google Таблица может хранить НЕСКОЛЬКО независимых черновиков — по одному на каждый
+   "код синхронизации". Устройства с одинаковым кодом видят и правят один и тот же акт; с разными кодами —
+   работают каждое со своим, никак не пересекаясь. Без кода используется общий черновик "default" (как раньше).
 
    ОДНОРАЗОВАЯ НАСТРОЙКА (5 минут, только Google-аккаунт, без иных регистраций):
-   1. Откройте sheets.google.com → создайте новую пустую таблицу (например «Акт — общий черновик»).
+   1. Откройте sheets.google.com → создайте новую пустую таблицу (например «Акт — черновики»).
    2. Меню «Расширения» → «Apps Script».
    3. Удалите весь код по умолчанию и вставьте вместо него:
 
+        function getSheet_() {
+          var ss = SpreadsheetApp.getActiveSpreadsheet();
+          var sh = ss.getSheetByName('drafts');
+          if (!sh) { sh = ss.insertSheet('drafts'); sh.appendRow(['code','json','updatedAt']); }
+          return sh;
+        }
+        function findRow_(sh, code) {
+          var data = sh.getDataRange().getValues();
+          for (var i = 1; i < data.length; i++) { if (String(data[i][0]) === String(code)) return i + 1; }
+          return null;
+        }
         function doGet(e) {
-          var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('draft')
-                 || SpreadsheetApp.getActiveSpreadsheet().insertSheet('draft');
-          var val = sh.getRange('A1').getValue();
+          var code = (e.parameter.code || 'default');
+          var sh = getSheet_();
+          var row = findRow_(sh, code);
+          var val = row ? sh.getRange(row, 2).getValue() : '{}';
           return ContentService.createTextOutput(val || '{}').setMimeType(ContentService.MimeType.JSON);
         }
         function doPost(e) {
-          var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('draft')
-                 || SpreadsheetApp.getActiveSpreadsheet().insertSheet('draft');
-          sh.getRange('A1').setValue(e.postData.contents);
+          var code = (e.parameter.code || 'default');
+          var sh = getSheet_();
+          var row = findRow_(sh, code);
+          if (row) { sh.getRange(row, 2).setValue(e.postData.contents); sh.getRange(row, 3).setValue(new Date()); }
+          else { sh.appendRow([code, e.postData.contents, new Date()]); }
           return ContentService.createTextOutput(JSON.stringify({ok:true})).setMimeType(ContentService.MimeType.JSON);
         }
 
@@ -348,18 +384,31 @@ function migrateState(s){
    5. Нажмите «Развернуть», разрешите доступ (это ваш собственный скрипт — предупреждение нормальное).
    6. Скопируйте URL веб-приложения (заканчивается на /exec) и вставьте его ниже вместо '' в WEBAPP_URL —
       либо пришлите этот URL в чат, и его впишут за вас.
+      Если WEBAPP_URL уже был вставлен раньше (старая однокодовая версия скрипта) — просто замените код в
+      Apps Script на этот новый и создайте новую версию развёртывания (Deploy → Manage deployments → Edit →
+      Version: New version) — URL остаётся тем же, ничего на сайте менять не нужно.
 
    ОГРАНИЧЕНИЯ: пока WEBAPP_URL пустой — общего хранилища ещё нет, работает только локальный кэш в этом браузере.
-   Таблица не защищена паролем отдельно от самого веб-приложения (это тот же уровень доступа, что и у самого сайта).
+   Таблица не защищена паролем отдельно от самого веб-приложения (это тот же уровень доступа, что и у самого сайта);
+   код синхронизации — это просто способ не путать черновики разных бригад, а не пароль.
    Если два человека сохраняют одновременно — побеждает тот, кто сохранил позже (без слияния правок).
    При пропадании интернета черновик на время остаётся только в этом браузере (IndexedDB) и досохраняется, когда
    сеть вернётся. */
 const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbw8pm7c4fSDbw9gMQZq8t0LKkcKc_QskVKYZi2ywjuRIJxKeDb8FMEQNC46IMBZHgdVJg/exec';
 
+// Sync code ("room"): devices sharing the same code read/write the same draft. Stored locally per-device
+// so it doesn't need to be re-entered on every visit.
+let syncCode = '';
+try{ syncCode = (localStorage.getItem('sync_code') || '').trim(); }catch(e){}
+function webAppUrl(){
+  const code = syncCode || 'default';
+  return WEBAPP_URL + (WEBAPP_URL.indexOf('?') >= 0 ? '&' : '?') + 'code=' + encodeURIComponent(code);
+}
+
 const IDB_NAME = 'akt_generator_db';
 const IDB_STORE = 'kv';
-const IDB_KEY = 'act_draft_cache_v1';
-const IDB_BASE_KEY = 'act_draft_base_v1';
+function IDB_KEY(){ return 'act_draft_cache_v1__' + (syncCode || 'default'); }
+function IDB_BASE_KEY(){ return 'act_draft_base_v1__' + (syncCode || 'default'); }
 let dbPromise = null;
 
 function openDB(){
@@ -489,23 +538,23 @@ function scheduleSave(){
 async function doSaveNow(){
   const pill = document.getElementById('statusPill');
   const localSnapshot = cloneJson(state);
-  try{ await idbSet(IDB_KEY, JSON.stringify(localSnapshot)); }catch(e){ /* local cache best-effort */ }
+  try{ await idbSet(IDB_KEY(), JSON.stringify(localSnapshot)); }catch(e){ /* local cache best-effort */ }
   if (!WEBAPP_URL){
     showSetupBanner();
     dirtySinceSave = false;
     baseState = localSnapshot;
-    try{ await idbSet(IDB_BASE_KEY, JSON.stringify(baseState)); }catch(e){}
+    try{ await idbSet(IDB_BASE_KEY(), JSON.stringify(baseState)); }catch(e){}
     pill.textContent = 'сохранено только локально (нет общего хранилища) · ' + new Date().toLocaleTimeString('ru-RU');
     return;
   }
   try{
     // Fetch the current shared copy first so simultaneous edits by a colleague get merged, not overwritten.
-    const getRes = await fetch(WEBAPP_URL, { method:'GET' });
+    const getRes = await fetch(webAppUrl(), { method:'GET' });
     let remote = null;
     if (getRes.ok){ try{ remote = migrateState(await getRes.json()); }catch(e){ remote = null; } }
     const merged = remote ? mergeStates(baseState, localSnapshot, remote) : localSnapshot;
     // text/plain avoids a CORS preflight that Apps Script web apps cannot answer.
-    const res = await fetch(WEBAPP_URL, {
+    const res = await fetch(webAppUrl(), {
       method:'POST',
       headers:{'Content-Type':'text/plain;charset=utf-8'},
       body: JSON.stringify(merged)
@@ -516,8 +565,8 @@ async function doSaveNow(){
     const gotColleagueChanges = JSON.stringify(merged) !== JSON.stringify(localSnapshot);
     state = merged;
     try{
-      await idbSet(IDB_KEY, JSON.stringify(state));
-      await idbSet(IDB_BASE_KEY, JSON.stringify(state));
+      await idbSet(IDB_KEY(), JSON.stringify(state));
+      await idbSet(IDB_BASE_KEY(), JSON.stringify(state));
     }catch(e){}
     if (gotColleagueChanges){
       const active = document.activeElement;
@@ -538,8 +587,8 @@ async function hardSaveNow(){
   const snapshot = JSON.stringify(state);
   baseState = JSON.parse(snapshot);
   try{
-    await idbSet(IDB_KEY, snapshot);
-    await idbSet(IDB_BASE_KEY, snapshot);
+    await idbSet(IDB_KEY(), snapshot);
+    await idbSet(IDB_BASE_KEY(), snapshot);
   }catch(e){}
   if (!WEBAPP_URL){
     showSetupBanner();
@@ -548,7 +597,7 @@ async function hardSaveNow(){
     return;
   }
   try{
-    const res = await fetch(WEBAPP_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: snapshot });
+    const res = await fetch(webAppUrl(), { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: snapshot });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     dirtySinceSave = false;
     pill.textContent = 'сброшено для всех · ' + new Date().toLocaleTimeString('ru-RU');
@@ -585,12 +634,12 @@ window.addEventListener('offline', () => { toast('Соединение поте�
 
 async function loadDraft(){
   let localCache = null, baseCache = null;
-  try{ const raw = await idbGet(IDB_KEY); if (raw) localCache = migrateState(JSON.parse(raw)); }catch(e){}
-  try{ const raw = await idbGet(IDB_BASE_KEY); if (raw) baseCache = migrateState(JSON.parse(raw)); }catch(e){}
+  try{ const raw = await idbGet(IDB_KEY()); if (raw) localCache = migrateState(JSON.parse(raw)); }catch(e){}
+  try{ const raw = await idbGet(IDB_BASE_KEY()); if (raw) baseCache = migrateState(JSON.parse(raw)); }catch(e){}
 
   if (WEBAPP_URL){
     try{
-      const res = await fetch(WEBAPP_URL, { method:'GET' });
+      const res = await fetch(webAppUrl(), { method:'GET' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const remote = migrateState(await res.json());
       // If this browser has locally-cached edits that never made it to the server (tab closed/reloaded or
@@ -600,8 +649,8 @@ async function loadDraft(){
       state = finalState;
       baseState = cloneJson(state);
       try{
-        await idbSet(IDB_KEY, JSON.stringify(state));
-        await idbSet(IDB_BASE_KEY, JSON.stringify(state));
+        await idbSet(IDB_KEY(), JSON.stringify(state));
+        await idbSet(IDB_BASE_KEY(), JSON.stringify(state));
       }catch(e){}
       if (localCache && JSON.stringify(finalState) !== JSON.stringify(remote)){
         doSaveNow(); // recovered edits the server didn't have yet — push them now
@@ -2332,6 +2381,61 @@ async function generateXlsx(){
 
 document.getElementById('btnGenDocx').addEventListener('click', () => generateDocx().catch(e => { console.error(e); toast('Ошибка при создании акта: ' + e.message); }));
 document.getElementById('btnGenXlsx').addEventListener('click', () => generateXlsx().catch(e => { console.error(e); toast('Ошибка при создании плана: ' + e.message); }));
+
+/* ============================= SYNC CODE (pair a tablet + a phone on the same act) ============================= */
+function updateSyncButtonLabel(){
+  const btn = document.getElementById('btnSync');
+  btn.textContent = syncCode ? ('🔗 Код: ' + syncCode) : '🔗 Синхронизация';
+}
+function renderSyncStatus(){
+  const el2 = document.getElementById('syncCurrentStatus');
+  el2.textContent = syncCode
+    ? ('Сейчас подключено с кодом «' + syncCode + '». Введите этот же код на другом устройстве, чтобы соединить их.')
+    : 'Сейчас синхронизация не настроена — используется общий черновик по умолчанию.';
+}
+function openSyncModal(){
+  document.getElementById('syncCodeInput').value = syncCode || '';
+  renderSyncStatus();
+  document.getElementById('syncModalOverlay').style.display = 'flex';
+}
+function closeSyncModal(){
+  document.getElementById('syncModalOverlay').style.display = 'none';
+}
+async function switchSyncCode(newCode){
+  syncCode = (newCode || '').trim();
+  try{ if (syncCode) localStorage.setItem('sync_code', syncCode); else localStorage.removeItem('sync_code'); }catch(e){}
+  updateSyncButtonLabel();
+  toast(syncCode ? ('Подключено с кодом «' + syncCode + '»') : 'Синхронизация отключена (общий черновик по умолчанию)');
+  const had = await loadDraft();
+  renderAll();
+  if (!had){ state = defaultState(); renderAll(); }
+}
+document.getElementById('btnSync').addEventListener('click', openSyncModal);
+document.getElementById('syncCloseBtn').addEventListener('click', closeSyncModal);
+document.getElementById('syncConnectBtn').addEventListener('click', async () => {
+  const v = document.getElementById('syncCodeInput').value.trim();
+  if (!v){ toast('Введите код'); return; }
+  await switchSyncCode(v);
+  closeSyncModal();
+});
+document.getElementById('syncDisconnectBtn').addEventListener('click', async () => {
+  await switchSyncCode('');
+  closeSyncModal();
+});
+document.getElementById('syncModalOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'syncModalOverlay') closeSyncModal();
+});
+updateSyncButtonLabel();
+
+// Poll periodically so a paired device picks up the other one's changes without needing a manual refresh.
+// Skipped whenever there are unsaved local edits, so we never overwrite work in progress mid-typing.
+setInterval(async () => {
+  if (dirtySinceSave) return;
+  const active = document.activeElement;
+  if (active && ['INPUT','TEXTAREA','SELECT'].includes(active.tagName)) return; // don't yank focus while typing
+  const fresh = await loadDraft();
+  if (fresh) renderAll();
+}, 8000);
 
 /* ============================= INIT ============================= */
 (async function init(){
