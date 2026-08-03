@@ -125,8 +125,8 @@
   .dashed-add:hover{border-color:var(--amber-dark); color:var(--amber-dark); background:#FFFBF2;}
   .ans-btn{border:1px solid var(--line); background:#fff; border-radius:6px; padding:4px 12px; font-size:11.5px; font-weight:700; cursor:pointer; color:var(--ink-soft); font-family:var(--sans);}
   .ans-btn:hover{background:#F3F5F7;}
-  .ans-yes-active{background:#FBEAE8; border-color:var(--danger); color:#8C2F27;}
-  .ans-no-active{background:#E7F3EA; border-color:var(--ok); color:#2E5E3D;}
+  .ans-danger-active{background:#FBEAE8; border-color:var(--danger); color:#8C2F27;}
+  .ans-ok-active{background:#E7F3EA; border-color:var(--ok); color:#2E5E3D;}
   .sign-row{display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; margin-bottom:8px;}
   footer.note{color:var(--ink-soft); font-size:11.5px; text-align:center; margin-top:30px; line-height:1.6;}
   .status-pill{
@@ -1316,6 +1316,16 @@ function plainSelectPairs(value, pairs, onInput){
   s.addEventListener('change', e => onInput(e.target.value));
   return s;
 }
+// Which answer means "there's a violation" depends on checklist type:
+// - ПБ items are phrased as requirements ("Наличие ..."), so 'Нет' (missing/non-compliant) is the violation.
+// - Линейные объекты (ОУ) items are phrased as defect statements ("Опора подлежит замене"), so 'Да'
+//   (confirming the defect is true) is the violation.
+function findingAnswerFor(type){
+  return type === 'pb' ? 'no' : 'yes';
+}
+function okAnswerFor(type){
+  return type === 'pb' ? 'yes' : 'no';
+}
 // Snapshot the currently in-progress object (type + answers + photos) into the queue, then reset the
 // working fields so the person can move on to the next object (possibly a different type).
 function pushCurrentToBatch(ui, opts){
@@ -1332,13 +1342,14 @@ function pushCurrentToBatch(ui, opts){
   ui.type = ''; ui.objectRef = ''; ui.answers = {}; ui.photos = {};
   return true;
 }
-// Write one queued object's answers into the target section (findings for 'Нет', checkedOk for 'Да').
+// Write one queued object's answers into the target section (finding vs. checked-OK depends on type, see above).
 function commitEntryToSection(sec, entry){
   const def = CHECKLISTS[entry.type];
   if (!def) return { findings:0, ok:0 };
-  // 'Да' confirms the defect statement is true (a violation) -> finding. 'Нет' means it's fine -> checked OK.
-  const problemIdx = Object.keys(entry.answers).filter(k => entry.answers[k] === 'yes' && typeof def.items[Number(k)] === 'string');
-  const okIdx = Object.keys(entry.answers).filter(k => entry.answers[k] === 'no' && typeof def.items[Number(k)] === 'string');
+  const findingAns = findingAnswerFor(entry.type);
+  const okAns = okAnswerFor(entry.type);
+  const problemIdx = Object.keys(entry.answers).filter(k => entry.answers[k] === findingAns && typeof def.items[Number(k)] === 'string');
+  const okIdx = Object.keys(entry.answers).filter(k => entry.answers[k] === okAns && typeof def.items[Number(k)] === 'string');
   const secIdx = state.sections.indexOf(sec);
   problemIdx.forEach(k => {
     sec.findings.push({
@@ -1426,8 +1437,10 @@ function renderChecklistTool(containerId, ui, allowedTypes){
     }}, 'Очистить'));
     queueWrap.appendChild(queueHead);
     ui.batch.forEach((entry, bi) => {
-      const problemCount = Object.values(entry.answers).filter(v => v === 'yes').length;
-      const okCount = Object.values(entry.answers).filter(v => v === 'no').length;
+      const findingAns = findingAnswerFor(entry.type);
+      const okAns = okAnswerFor(entry.type);
+      const problemCount = Object.values(entry.answers).filter(v => v === findingAns).length;
+      const okCount = Object.values(entry.answers).filter(v => v === okAns).length;
       const row2 = el('div', {style:'display:flex; justify-content:space-between; align-items:center; font-size:12px; padding:4px 0; border-top:1px solid #E7E2D6;'});
       row2.appendChild(el('span', {}, `${entry.typeLabel}${entry.objectRef ? ' — ' + entry.objectRef : ''} · замечаний: ${problemCount}, осмотрено: ${okCount}`));
       row2.appendChild(el('button', {class:'icon-btn', title:'Убрать объект из очереди', onClick: () => {
@@ -1444,15 +1457,24 @@ function renderChecklistTool(containerId, ui, allowedTypes){
 
   if (ui.type && CHECKLISTS[ui.type]){
     const items = CHECKLISTS[ui.type].items;
+    const findingAns = findingAnswerFor(ui.type);
+    const yesIsFinding = findingAns === 'yes';
+    const yesActiveClass = yesIsFinding ? 'ans-danger-active' : 'ans-ok-active';
+    const noActiveClass = yesIsFinding ? 'ans-ok-active' : 'ans-danger-active';
     if (items.length > 30){
       const filterWrap = el('div', {style:'margin-top:10px;'});
       filterWrap.appendChild(plainTextInput(ui.filter || '', v => { ui.filter = v; renderChecklistTool(containerId, ui, allowedTypes); }, 'Фильтр: начните вводить слово, например «огнетушит»…'));
       container.appendChild(filterWrap);
     }
-    const legend = el('div', {style:'display:flex; justify-content:flex-end; gap:14px; font-size:11.5px; color:var(--ink-soft); margin-top:8px;'}, [
-      el('span', {}, '«Да» — подтверждено, есть нарушение → станет замечанием'),
-      el('span', {}, '«Нет» — соответствует норме → в акт как «осмотрено, замечаний нет»')
-    ]);
+    const legend = el('div', {style:'display:flex; justify-content:flex-end; gap:14px; font-size:11.5px; color:var(--ink-soft); margin-top:8px;'},
+      yesIsFinding ? [
+        el('span', {}, '«Да» — подтверждено, есть нарушение → станет замечанием'),
+        el('span', {}, '«Нет» — соответствует норме → в акт как «осмотрено, замечаний нет»')
+      ] : [
+        el('span', {}, '«Да» — соответствует норме → в акт как «осмотрено, замечаний нет»'),
+        el('span', {}, '«Нет» — не соответствует норме → станет замечанием')
+      ]
+    );
     container.appendChild(legend);
     const filterText = (ui.filter || '').trim().toLowerCase();
     const list = el('div', {style:'margin-top:6px; display:flex; flex-direction:column; gap:2px; max-height:420px; overflow:auto; padding-right:6px;'});
@@ -1461,12 +1483,14 @@ function renderChecklistTool(containerId, ui, allowedTypes){
     let counterEl = null;
     function currentCounts(){
       const vals = Object.values(ui.answers);
-      return { yes: vals.filter(v => v === 'yes').length, no: vals.filter(v => v === 'no').length };
+      const yesCount = vals.filter(v => v === 'yes').length;
+      const noCount = vals.filter(v => v === 'no').length;
+      return { findings: yesIsFinding ? yesCount : noCount, ok: yesIsFinding ? noCount : yesCount };
     }
     function updateCounter(){
       if (counterEl){
         const c = currentCounts();
-        counterEl.textContent = `Отмечено: «Да» (замечания) — ${c.yes}, «Нет» (осмотрено) — ${c.no}`;
+        counterEl.textContent = `Отмечено: замечаний — ${c.findings}, осмотрено без замечаний — ${c.ok}`;
       }
     }
     items.forEach((entry, idx) => {
@@ -1486,22 +1510,22 @@ function renderChecklistTool(containerId, ui, allowedTypes){
       const line = el('div', {style:'display:flex; gap:10px; align-items:center; font-size:12.5px; line-height:1.4;'});
       const textSpan = el('span', {style:'flex:1;'}, text);
       const btnGroup = el('div', {style:'display:flex; gap:4px; flex:none;'});
-      const yesBtn = el('button', {type:'button', class:'ans-btn' + (current === 'yes' ? ' ans-yes-active' : '')}, 'Да');
-      const noBtn = el('button', {type:'button', class:'ans-btn' + (current === 'no' ? ' ans-no-active' : '')}, 'Нет');
+      const yesBtn = el('button', {type:'button', class:'ans-btn' + (current === 'yes' ? ' ' + yesActiveClass : '')}, 'Да');
+      const noBtn = el('button', {type:'button', class:'ans-btn' + (current === 'no' ? ' ' + noActiveClass : '')}, 'Нет');
       // Update this row's own buttons and the counter directly — no full re-render, so scroll position
       // and every other item on screen stay exactly where they were.
       yesBtn.addEventListener('click', () => {
         const now = ui.answers[idx] === 'yes' ? undefined : 'yes';
         ui.answers[idx] = now;
-        yesBtn.classList.toggle('ans-yes-active', now === 'yes');
-        noBtn.classList.remove('ans-no-active');
+        yesBtn.classList.toggle(yesActiveClass, now === 'yes');
+        noBtn.classList.remove(noActiveClass);
         updateCounter();
       });
       noBtn.addEventListener('click', () => {
         const now = ui.answers[idx] === 'no' ? undefined : 'no';
         ui.answers[idx] = now;
-        noBtn.classList.toggle('ans-no-active', now === 'no');
-        yesBtn.classList.remove('ans-yes-active');
+        noBtn.classList.toggle(noActiveClass, now === 'no');
+        yesBtn.classList.remove(yesActiveClass);
         updateCounter();
       });
       btnGroup.appendChild(yesBtn);
