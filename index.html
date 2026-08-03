@@ -1347,7 +1347,7 @@ function applyGlobalChecklist(){
   scheduleSave();
   toast('Добавлено в раздел «' + (sec.title || '') + '»: замечаний — ' + noIdx.length + ', осмотрено без замечаний — ' + yesIdx.length);
 }
-const VISIBLE_CHECKLIST_TYPES = ['pb']; // only fire/industrial safety (ПБ) is offered in section 2 for now
+const VISIBLE_CHECKLIST_TYPES = ['pb', 'opora', 'psu', 'gpon', 'krt', 'yakg', 'rsh', 'orsh'];
 function renderGlobalChecklistTool(){
   const container = document.getElementById('globalChecklistContainer');
   container.innerHTML = '';
