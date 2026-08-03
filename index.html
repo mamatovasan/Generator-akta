@@ -123,6 +123,10 @@
     padding:10px; border-radius:8px; font-weight:600; font-size:13px;
   }
   .dashed-add:hover{border-color:var(--amber-dark); color:var(--amber-dark); background:#FFFBF2;}
+  .ans-btn{border:1px solid var(--line); background:#fff; border-radius:6px; padding:4px 12px; font-size:11.5px; font-weight:700; cursor:pointer; color:var(--ink-soft); font-family:var(--sans);}
+  .ans-btn:hover{background:#F3F5F7;}
+  .ans-yes-active{background:#E7F3EA; border-color:var(--ok); color:#2E5E3D;}
+  .ans-no-active{background:#FBEAE8; border-color:var(--danger); color:#8C2F27;}
   .sign-row{display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; margin-bottom:8px;}
   footer.note{color:var(--ink-soft); font-size:11.5px; text-align:center; margin-top:30px; line-height:1.6;}
   .status-pill{
@@ -168,10 +172,17 @@
     <div id="metaFields"></div>
   </div>
 
+  <div class="card" id="checklistCard">
+    <h2>2 · Чек-лист осмотра (БиОТ/ПБ и линейные объекты)</h2>
+    <p class="sub">Выберите тип объекта, отметьте галочками то, чего не хватает или что не соответствует норме —
+    отмеченные пункты сразу станут замечаниями в выбранном (или новом) разделе акта.</p>
+    <div id="globalChecklistContainer"></div>
+  </div>
+
   <div class="card" id="sectionsCard">
-    <h2>2 · Разделы проверки и замечания</h2>
+    <h2>3 · Замечания по объектам (ПСУ, РШ, ОРШ и т.д.)</h2>
     <p class="sub">Каждый раздел — это блок проверки (например «Осмотр ПСУ», «Охрана труда», «Санитарно-бытовые условия»).
-    Внутри раздела добавляйте замечания — они попадут и в акт, и в план устранения.</p>
+    Внутри раздела добавляйте замечания вручную — они попадут и в акт, и в план устранения.</p>
     <div id="sectionsContainer"></div>
     <button class="dashed-add" id="addSectionBtn">+ Добавить раздел проверки</button>
     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
@@ -181,7 +192,7 @@
   </div>
 
   <div class="card" id="conclusionCard">
-    <h2>3 · Вывод, нарушенные требования и рекомендация</h2>
+    <h2>4 · Вывод, нарушенные требования и рекомендация</h2>
     <div class="field" style="margin-bottom:14px;">
       <span>Вывод по результатам проверки</span>
       <textarea class="input textarea" id="conclusionInput" rows="4"></textarea>
@@ -199,14 +210,14 @@
   </div>
 
   <div class="card" id="signCard">
-    <h2>4 · Подписи комиссии (акт)</h2>
+    <h2>5 · Подписи комиссии (акт)</h2>
     <p class="sub">Должность и Ф.И.О. — построчно, как в подписи под актом.</p>
     <div id="signatoriesContainer"></div>
     <button class="dashed-add" id="addSignBtn">+ Добавить подписанта</button>
   </div>
 
   <div class="card" id="planMetaCard">
-    <h2>5 · Гриф плана устранения (Excel)</h2>
+    <h2>6 · Гриф плана устранения (Excel)</h2>
     <p class="sub">Строки «СОГЛАСОВАНО / УТВЕРЖДАЮ» в шапке плана мероприятий.</p>
     <div class="grid">
       <label class="field"><span>СОГЛАСОВАНО — должность</span><input class="input" id="planAgreedPosition"></label>
@@ -786,6 +797,7 @@ function renderSections(){
   state.sections.forEach((sec, idx) => {
     container.appendChild(renderSectionCard(sec, idx));
   });
+  if (document.getElementById('globalChecklistContainer')) renderGlobalChecklistTool();
 }
 
 /* ============================= INSPECTION CHECKLISTS (from Лист осмотра ...) ============================= */
@@ -954,10 +966,9 @@ const CHECKLISTS = {
     'Требуется выкладка волокон на КДЗС'
   ]},
   pb: { label:'Пожарная и производственная безопасность (по ПБ)', items:[
-    { header:'Общие положения' },
+    { header:'Территория и здание ЛТЦ/ЛТУ' },
     'Устранение замечаний предыдущих проверок',
     'Устранение замечаний аудита АО "Самрук-Казына"',
-    { header:'Основные требования безопасности по содержанию производственных территорий' },
     'Наличие схем и знаков передвижение транспортных средств по территорий Общества',
     'Наличие указателей и таблички место сбора работников в случае ЧС',
     'Складирование на территорий горючих материалов и мусора (несвоевременный вывоз)',
@@ -969,7 +980,6 @@ const CHECKLISTS = {
     'Дороги, тротуары, проходы к местам работы должны быть свободными для движения, выровнены (без рытвин, ям)',
     'Зимой их нужно очищать от снега и льда, а в случае гололедицы посыпать противоскользящими средствами.',
     'В ночное время и в условиях плохой видимости территория объекта должна иметь систему электроосвещения.',
-    { header:'Требования безопасности при эксплуатации производственных зданий и помещений' },
     'В зданиях и помещениях должны быть в достаточном количестве первичные средства пожаротушения в соответствии с требованиями НПА',
     'Размещение складских помещений в одном здании с производственными помещениями не должно противоречить условиям технологического процесса, санитарным и противопожарным требованиям',
     'Складские помещения, отнесённые к взрывоопасным или пожароопасным категориям (А и Б), должны размещаться в отдельно стоящих одноэтажных зданиях или в пристройках к производственным зданиям, имеющих противопожарные преграды в соответствии с требованиями строительных норм.',
@@ -1266,11 +1276,8 @@ const CHECKLISTS = {
   ]}
 };
 // Transient UI-only state for the checklist tool (not part of saved/shared act data — it's just a quick-entry helper).
-const checklistUI = {};
-function getChecklistUI(secId){
-  if (!checklistUI[secId]) checklistUI[secId] = { type:'', objectRef:'', checked:{}, filter:'' };
-  return checklistUI[secId];
-}
+// It's global now (one tool, own top-level card) rather than duplicated inside every section.
+const globalChecklistUI = { type:'', objectRef:'', answers:{}, filter:'', targetSectionId:'__new__', newSectionName:'' };
 function plainTextInput(value, onInput, placeholder){
   const i = el('input', {type:'text', class:'input', placeholder: placeholder || ''});
   i.value = value || '';
@@ -1287,13 +1294,22 @@ function plainSelectPairs(value, pairs, onInput){
   s.addEventListener('change', e => onInput(e.target.value));
   return s;
 }
-function applyChecklist(sec, ui){
+function applyGlobalChecklist(){
+  const ui = globalChecklistUI;
   const def = CHECKLISTS[ui.type];
-  if (!def) return;
-  const checkedIdx = Object.keys(ui.checked).filter(k => ui.checked[k] && typeof def.items[Number(k)] === 'string');
-  if (checkedIdx.length === 0){ toast('Отметьте хотя бы один пункт с замечанием'); return; }
+  if (!def){ toast('Сначала выберите тип чек-листа'); return; }
+  const noIdx = Object.keys(ui.answers).filter(k => ui.answers[k] === 'no' && typeof def.items[Number(k)] === 'string');
+  if (noIdx.length === 0){ toast('Отметьте «Нет» хотя бы для одного пункта'); return; }
+
+  let sec = null;
+  const wantsNew = (ui.targetSectionId || '__new__') === '__new__';
+  if (!wantsNew) sec = state.sections.find(s => s.id === ui.targetSectionId) || null;
+  if (!sec){
+    sec = { id: uid(), title: (ui.newSectionName || '').trim() || def.label, description:'', table:null, findings:[] };
+    state.sections.push(sec);
+  }
   const secIdx = state.sections.indexOf(sec);
-  checkedIdx.forEach(k => {
+  noIdx.forEach(k => {
     sec.findings.push({
       id: uid(),
       number: (secIdx+1) + '.' + (sec.findings.length+1),
@@ -1302,34 +1318,54 @@ function applyChecklist(sec, ui){
       responsible:'', deadline:'', photos:[]
     });
   });
-  ui.checked = {};
-  renderSections();
+  ui.answers = {};
+  ui.targetSectionId = sec.id; // keep pointing at this section so repeated batches land in the same place
+  renderAll();
   scheduleSave();
-  toast('Добавлено замечаний из чек-листа: ' + checkedIdx.length);
+  toast('Добавлено замечаний: ' + noIdx.length + ' → раздел «' + (sec.title || '') + '»');
 }
-function renderChecklistTool(sec){
-  const ui = getChecklistUI(sec.id);
-  const wrap = el('div', {style:'margin-top:16px; border:1px dashed #B9C2CA; border-radius:8px; padding:12px; background:#FAFBFC;'});
-  wrap.appendChild(el('strong', {style:'font-size:13px; color:var(--navy); display:block; margin-bottom:8px;'}, 'Быстрое добавление по чек-листу осмотра'));
+const VISIBLE_CHECKLIST_TYPES = ['pb']; // only fire/industrial safety (ПБ) is offered in section 2 for now
+function renderGlobalChecklistTool(){
+  const container = document.getElementById('globalChecklistContainer');
+  container.innerHTML = '';
+  const ui = globalChecklistUI;
 
   const row = el('div', {class:'grid'});
   row.appendChild(labeled('Тип чек-листа', plainSelectPairs(ui.type,
-    [['', '— выбрать тип объекта —'], ...Object.entries(CHECKLISTS).map(([k, v]) => [k, v.label])],
-    v => { ui.type = v; ui.checked = {}; ui.filter = ''; renderSections(); })));
+    [['', '— выбрать тип объекта —'], ...VISIBLE_CHECKLIST_TYPES.map(k => [k, CHECKLISTS[k].label])],
+    v => {
+      ui.type = v; ui.answers = {}; ui.filter = '';
+      if (!ui.newSectionName && CHECKLISTS[v]) ui.newSectionName = CHECKLISTS[v].label;
+      renderGlobalChecklistTool();
+    })));
   row.appendChild(labeled('Номер объекта / адрес (общий для всех отмеченных пунктов)',
     plainTextInput(ui.objectRef, v => { ui.objectRef = v; }, 'например «ПСУ №14» или «РШ №3, ул. Абая 12»')));
-  wrap.appendChild(row);
+  container.appendChild(row);
+
+  const targetRow = el('div', {class:'grid', style:'margin-top:10px;'});
+  const sectionOptions = [['__new__', '+ Новый раздел'], ...state.sections.map(s => [s.id, s.title || 'Без названия'])];
+  targetRow.appendChild(labeled('Куда добавить замечания', plainSelectPairs(ui.targetSectionId || '__new__', sectionOptions,
+    v => { ui.targetSectionId = v; renderGlobalChecklistTool(); })));
+  if ((ui.targetSectionId || '__new__') === '__new__'){
+    targetRow.appendChild(labeled('Название нового раздела', plainTextInput(ui.newSectionName, v => { ui.newSectionName = v; }, 'Например «Осмотр ПСУ»')));
+  }
+  container.appendChild(targetRow);
 
   if (ui.type && CHECKLISTS[ui.type]){
     const items = CHECKLISTS[ui.type].items;
     if (items.length > 30){
       const filterWrap = el('div', {style:'margin-top:10px;'});
-      filterWrap.appendChild(plainTextInput(ui.filter || '', v => { ui.filter = v; renderSections(); }, 'Фильтр: начните вводить слово, например «огнетушит»…'));
-      wrap.appendChild(filterWrap);
+      filterWrap.appendChild(plainTextInput(ui.filter || '', v => { ui.filter = v; renderGlobalChecklistTool(); }, 'Фильтр: начните вводить слово, например «огнетушит»…'));
+      container.appendChild(filterWrap);
     }
+    const legend = el('div', {style:'display:flex; justify-content:flex-end; gap:14px; font-size:11.5px; color:var(--ink-soft); margin-top:8px;'}, [
+      el('span', {}, '«Да» — соответствует / имеется'),
+      el('span', {}, '«Нет» — не соответствует / отсутствует → станет замечанием')
+    ]);
+    container.appendChild(legend);
     const filterText = (ui.filter || '').trim().toLowerCase();
-    const list = el('div', {style:'margin-top:10px; display:flex; flex-direction:column; gap:5px; max-height:360px; overflow:auto; padding-right:6px;'});
-    let visibleCount = 0;
+    const list = el('div', {style:'margin-top:6px; display:flex; flex-direction:column; gap:2px; max-height:420px; overflow:auto; padding-right:6px;'});
+    let visibleCount = 0, noCount = 0;
     let pendingHeader = null;
     items.forEach((entry, idx) => {
       if (entry && typeof entry === 'object' && entry.header){
@@ -1337,31 +1373,40 @@ function renderChecklistTool(sec){
         return;
       }
       const text = entry;
+      if (ui.answers[idx] === 'no') noCount++;
       if (filterText && !text.toLowerCase().includes(filterText)) return;
       if (pendingHeader !== null){
-        list.appendChild(el('div', {style:'font-weight:700; font-size:12px; color:var(--navy); margin:8px 0 2px; text-transform:uppercase; letter-spacing:.2px;'}, pendingHeader));
+        list.appendChild(el('div', {style:'font-weight:700; font-size:12px; color:var(--navy); margin:10px 0 2px; text-transform:uppercase; letter-spacing:.2px;'}, pendingHeader));
         pendingHeader = null;
       }
       visibleCount++;
-      const line = el('label', {style:'display:flex; gap:8px; align-items:flex-start; font-size:12.5px; cursor:pointer; line-height:1.4;'});
-      const cb = el('input', {type:'checkbox', style:'margin-top:3px; flex:none;'});
-      cb.checked = !!ui.checked[idx];
-      cb.addEventListener('change', e => { ui.checked[idx] = e.target.checked; });
-      line.appendChild(cb);
-      line.appendChild(el('span', {}, text));
+      const current = ui.answers[idx];
+      const line = el('div', {style:'display:flex; gap:10px; align-items:center; font-size:12.5px; line-height:1.4; padding:5px 0; border-bottom:1px solid #F0F2F4;'});
+      const textSpan = el('span', {style:'flex:1;'}, text);
+      const btnGroup = el('div', {style:'display:flex; gap:4px; flex:none;'});
+      const yesBtn = el('button', {type:'button', class:'ans-btn' + (current === 'yes' ? ' ans-yes-active' : ''),
+        onClick: () => { ui.answers[idx] = (current === 'yes' ? undefined : 'yes'); renderGlobalChecklistTool(); }}, 'Да');
+      const noBtn = el('button', {type:'button', class:'ans-btn' + (current === 'no' ? ' ans-no-active' : ''),
+        onClick: () => { ui.answers[idx] = (current === 'no' ? undefined : 'no'); renderGlobalChecklistTool(); }}, 'Нет');
+      btnGroup.appendChild(yesBtn);
+      btnGroup.appendChild(noBtn);
+      line.appendChild(textSpan);
+      line.appendChild(btnGroup);
       list.appendChild(line);
     });
     if (visibleCount === 0){
       list.appendChild(el('p', {class:'empty-hint'}, 'Ничего не найдено по фильтру.'));
     }
-    wrap.appendChild(list);
+    container.appendChild(list);
 
-    const actions = el('div', {style:'display:flex; gap:8px; margin-top:10px;'});
-    actions.appendChild(el('button', {class:'btn-amber btn-sm', onClick: () => applyChecklist(sec, ui)}, 'Добавить отмеченные как замечания'));
-    actions.appendChild(el('button', {class:'btn-outline btn-sm', onClick: () => { ui.checked = {}; renderSections(); }}, 'Снять все галочки'));
-    wrap.appendChild(actions);
+    const actions = el('div', {style:'display:flex; gap:8px; align-items:center; margin-top:10px;'});
+    actions.appendChild(el('button', {class:'btn-amber btn-sm', onClick: applyGlobalChecklist}, 'Добавить отмеченные «Нет» как замечания'));
+    actions.appendChild(el('button', {class:'btn-outline btn-sm', onClick: () => { ui.answers = {}; renderGlobalChecklistTool(); }}, 'Сбросить все ответы'));
+    actions.appendChild(el('span', {style:'font-size:12px; color:var(--ink-soft);'}, `Отмечено «Нет»: ${noCount}`));
+    container.appendChild(actions);
+  } else {
+    container.appendChild(el('p', {class:'empty-hint'}, 'Выберите тип объекта выше, чтобы увидеть пункты чек-листа.'));
   }
-  return wrap;
 }
 
 function renderSectionCard(sec, idx){
@@ -1374,6 +1419,7 @@ function renderSectionCard(sec, idx){
   head.appendChild(headMain);
   head.appendChild(el('button', {class:'icon-btn', title:'Удалить раздел', onClick: () => removeSection(sec)}, '✕'));
   block.appendChild(head);
+
 
   const body = el('div', {class:'section-body'});
 
@@ -1402,8 +1448,6 @@ function renderSectionCard(sec, idx){
 
   body.appendChild(el('button', {class:'dashed-add', style:'margin-top:6px;', onClick: () => addFinding(sec)},
     '+ Добавить замечание'));
-
-  body.appendChild(renderChecklistTool(sec));
 
   block.appendChild(body);
   return block;
@@ -1621,6 +1665,7 @@ function renderPlanMeta(){
 /* ============================= FULL RENDER / RESET ============================= */
 function renderAll(){
   renderMeta();
+  renderGlobalChecklistTool();
   renderSections();
   renderSignatories();
   renderConclusion();
