@@ -1365,15 +1365,21 @@ function renderGlobalChecklistTool(){
     container.appendChild(legend);
     const filterText = (ui.filter || '').trim().toLowerCase();
     const list = el('div', {style:'margin-top:6px; display:flex; flex-direction:column; gap:2px; max-height:420px; overflow:auto; padding-right:6px;'});
-    let visibleCount = 0, noCount = 0;
+    let visibleCount = 0;
     let pendingHeader = null;
+    let noCounterEl = null;
+    function currentNoCount(){
+      return Object.values(ui.answers).filter(v => v === 'no').length;
+    }
+    function updateNoCounter(){
+      if (noCounterEl) noCounterEl.textContent = 'Отмечено «Нет»: ' + currentNoCount();
+    }
     items.forEach((entry, idx) => {
       if (entry && typeof entry === 'object' && entry.header){
         pendingHeader = entry.header;
         return;
       }
       const text = entry;
-      if (ui.answers[idx] === 'no') noCount++;
       if (filterText && !text.toLowerCase().includes(filterText)) return;
       if (pendingHeader !== null){
         list.appendChild(el('div', {style:'font-weight:700; font-size:12px; color:var(--navy); margin:10px 0 2px; text-transform:uppercase; letter-spacing:.2px;'}, pendingHeader));
@@ -1384,10 +1390,24 @@ function renderGlobalChecklistTool(){
       const line = el('div', {style:'display:flex; gap:10px; align-items:center; font-size:12.5px; line-height:1.4; padding:5px 0; border-bottom:1px solid #F0F2F4;'});
       const textSpan = el('span', {style:'flex:1;'}, text);
       const btnGroup = el('div', {style:'display:flex; gap:4px; flex:none;'});
-      const yesBtn = el('button', {type:'button', class:'ans-btn' + (current === 'yes' ? ' ans-yes-active' : ''),
-        onClick: () => { ui.answers[idx] = (current === 'yes' ? undefined : 'yes'); renderGlobalChecklistTool(); }}, 'Да');
-      const noBtn = el('button', {type:'button', class:'ans-btn' + (current === 'no' ? ' ans-no-active' : ''),
-        onClick: () => { ui.answers[idx] = (current === 'no' ? undefined : 'no'); renderGlobalChecklistTool(); }}, 'Нет');
+      const yesBtn = el('button', {type:'button', class:'ans-btn' + (current === 'yes' ? ' ans-yes-active' : '')}, 'Да');
+      const noBtn = el('button', {type:'button', class:'ans-btn' + (current === 'no' ? ' ans-no-active' : '')}, 'Нет');
+      // Update this row's own buttons and the counter directly — no full re-render, so scroll position
+      // and every other item on screen stay exactly where they were.
+      yesBtn.addEventListener('click', () => {
+        const now = ui.answers[idx] === 'yes' ? undefined : 'yes';
+        ui.answers[idx] = now;
+        yesBtn.classList.toggle('ans-yes-active', now === 'yes');
+        noBtn.classList.remove('ans-no-active');
+        updateNoCounter();
+      });
+      noBtn.addEventListener('click', () => {
+        const now = ui.answers[idx] === 'no' ? undefined : 'no';
+        ui.answers[idx] = now;
+        noBtn.classList.toggle('ans-no-active', now === 'no');
+        yesBtn.classList.remove('ans-yes-active');
+        updateNoCounter();
+      });
       btnGroup.appendChild(yesBtn);
       btnGroup.appendChild(noBtn);
       line.appendChild(textSpan);
@@ -1402,7 +1422,8 @@ function renderGlobalChecklistTool(){
     const actions = el('div', {style:'display:flex; gap:8px; align-items:center; margin-top:10px;'});
     actions.appendChild(el('button', {class:'btn-amber btn-sm', onClick: applyGlobalChecklist}, 'Добавить отмеченные «Нет» как замечания'));
     actions.appendChild(el('button', {class:'btn-outline btn-sm', onClick: () => { ui.answers = {}; renderGlobalChecklistTool(); }}, 'Сбросить все ответы'));
-    actions.appendChild(el('span', {style:'font-size:12px; color:var(--ink-soft);'}, `Отмечено «Нет»: ${noCount}`));
+    noCounterEl = el('span', {style:'font-size:12px; color:var(--ink-soft);'}, 'Отмечено «Нет»: ' + currentNoCount());
+    actions.appendChild(noCounterEl);
     container.appendChild(actions);
   } else {
     container.appendChild(el('p', {class:'empty-hint'}, 'Выберите тип объекта выше, чтобы увидеть пункты чек-листа.'));
