@@ -172,15 +172,22 @@
     <div id="metaFields"></div>
   </div>
 
-  <div class="card" id="checklistCard">
-    <h2>2 · Чек-лист осмотра (БиОТ/ПБ и линейные объекты)</h2>
-    <p class="sub">Выберите тип объекта, отметьте галочками то, чего не хватает или что не соответствует норме —
-    отмеченные пункты сразу станут замечаниями в выбранном (или новом) разделе акта.</p>
-    <div id="globalChecklistContainer"></div>
+  <div class="card" id="pbChecklistCard">
+    <h2>2 · Чек-лист: пожарная и производственная безопасность (ПБ)</h2>
+    <p class="sub">Отметьте галочками «Да»/«Нет» то, что соответствует или не соответствует норме — отмеченные
+    пункты сразу станут замечаниями (или отметкой «осмотрено») в выбранном (или новом) разделе акта.</p>
+    <div id="pbChecklistContainer"></div>
+  </div>
+
+  <div class="card" id="ouChecklistCard">
+    <h2>3 · Чек-лист: линейные объекты (ОУ — опоры, ПСУ, ОРК, КРТ, ЯКГ, РШ, ОРШ)</h2>
+    <p class="sub">Выберите тип объекта (опоры, ПСУ, ОРК, КРТ, ЯКГ, РШ или ОРШ), отметьте «Да»/«Нет» по каждому пункту —
+    отмеченные пункты сразу станут замечаниями (или отметкой «осмотрено») в выбранном (или новом) разделе акта.</p>
+    <div id="ouChecklistContainer"></div>
   </div>
 
   <div class="card" id="sectionsCard">
-    <h2>3 · Замечания по объектам (ПСУ, РШ, ОРШ и т.д.)</h2>
+    <h2>4 · Замечания по объектам (ПСУ, РШ, ОРШ и т.д.)</h2>
     <p class="sub">Каждый раздел — это блок проверки (например «Осмотр ПСУ», «Охрана труда», «Санитарно-бытовые условия»).
     Внутри раздела добавляйте замечания вручную — они попадут и в акт, и в план устранения.</p>
     <div id="sectionsContainer"></div>
@@ -192,7 +199,7 @@
   </div>
 
   <div class="card" id="conclusionCard">
-    <h2>4 · Вывод, нарушенные требования и рекомендация</h2>
+    <h2>5 · Вывод, нарушенные требования и рекомендация</h2>
     <div class="field" style="margin-bottom:14px;">
       <span>Вывод по результатам проверки</span>
       <textarea class="input textarea" id="conclusionInput" rows="4"></textarea>
@@ -210,14 +217,14 @@
   </div>
 
   <div class="card" id="signCard">
-    <h2>5 · Подписи комиссии (акт)</h2>
+    <h2>6 · Подписи комиссии (акт)</h2>
     <p class="sub">Должность и Ф.И.О. — построчно, как в подписи под актом.</p>
     <div id="signatoriesContainer"></div>
     <button class="dashed-add" id="addSignBtn">+ Добавить подписанта</button>
   </div>
 
   <div class="card" id="planMetaCard">
-    <h2>6 · Гриф плана устранения (Excel)</h2>
+    <h2>7 · Гриф плана устранения (Excel)</h2>
     <p class="sub">Строки «СОГЛАСОВАНО / УТВЕРЖДАЮ» в шапке плана мероприятий.</p>
     <div class="grid">
       <label class="field"><span>СОГЛАСОВАНО — должность</span><input class="input" id="planAgreedPosition"></label>
@@ -806,7 +813,7 @@ function renderSections(){
   state.sections.forEach((sec, idx) => {
     container.appendChild(renderSectionCard(sec, idx));
   });
-  if (document.getElementById('globalChecklistContainer')) renderGlobalChecklistTool();
+  renderAllChecklistTools();
 }
 
 /* ============================= INSPECTION CHECKLISTS (from Лист осмотра ...) ============================= */
@@ -1286,7 +1293,13 @@ const CHECKLISTS = {
 };
 // Transient UI-only state for the checklist tool (not part of saved/shared act data — it's just a quick-entry helper).
 // It's global now (one tool, own top-level card) rather than duplicated inside every section.
-const globalChecklistUI = { type:'', objectRef:'', answers:{}, photos:{}, filter:'', targetSectionId:'__new__', newSectionName:'' };
+function makeChecklistUI(){
+  return { type:'', objectRef:'', answers:{}, photos:{}, filter:'', targetSectionId:'__new__', newSectionName:'', batch:[] };
+}
+const pbChecklistUI = makeChecklistUI();
+const ouChecklistUI = makeChecklistUI();
+const PB_CHECKLIST_TYPES = ['pb'];
+const OU_CHECKLIST_TYPES = ['opora', 'psu', 'gpon', 'krt', 'yakg', 'rsh', 'orsh'];
 function plainTextInput(value, onInput, placeholder){
   const i = el('input', {type:'text', class:'input', placeholder: placeholder || ''});
   i.value = value || '';
@@ -1303,36 +1316,42 @@ function plainSelectPairs(value, pairs, onInput){
   s.addEventListener('change', e => onInput(e.target.value));
   return s;
 }
-function applyGlobalChecklist(){
-  const ui = globalChecklistUI;
+// Snapshot the currently in-progress object (type + answers + photos) into the queue, then reset the
+// working fields so the person can move on to the next object (possibly a different type).
+function pushCurrentToBatch(ui, opts){
+  opts = opts || {};
   const def = CHECKLISTS[ui.type];
-  if (!def){ toast('Сначала выберите тип чек-листа'); return; }
-  const noIdx = Object.keys(ui.answers).filter(k => ui.answers[k] === 'no' && typeof def.items[Number(k)] === 'string');
-  const yesIdx = Object.keys(ui.answers).filter(k => ui.answers[k] === 'yes' && typeof def.items[Number(k)] === 'string');
-  if (noIdx.length === 0 && yesIdx.length === 0){ toast('Отметьте «Да» или «Нет» хотя бы для одного пункта'); return; }
-
-  let sec = null;
-  const wantsNew = (ui.targetSectionId || '__new__') === '__new__';
-  if (!wantsNew) sec = state.sections.find(s => s.id === ui.targetSectionId) || null;
-  if (!sec){
-    sec = { id: uid(), title: (ui.newSectionName || '').trim() || def.label, description:'', table:null, findings:[], checkedOk:[] };
-    state.sections.push(sec);
-  }
-  if (!sec.checkedOk) sec.checkedOk = [];
+  if (!def){ if (!opts.silent) toast('Сначала выберите тип объекта'); return false; }
+  const hasAnswers = Object.values(ui.answers).some(v => v === 'yes' || v === 'no');
+  if (!hasAnswers){ if (!opts.silent) toast('Отметьте хотя бы один пункт «Да» или «Нет» для этого объекта'); return false; }
+  ui.batch.push({
+    id: uid(), type: ui.type, typeLabel: def.label, objectRef: ui.objectRef,
+    answers: Object.assign({}, ui.answers),
+    photos: JSON.parse(JSON.stringify(ui.photos))
+  });
+  ui.type = ''; ui.objectRef = ''; ui.answers = {}; ui.photos = {};
+  return true;
+}
+// Write one queued object's answers into the target section (findings for 'Нет', checkedOk for 'Да').
+function commitEntryToSection(sec, entry){
+  const def = CHECKLISTS[entry.type];
+  if (!def) return { no:0, yes:0 };
+  const noIdx = Object.keys(entry.answers).filter(k => entry.answers[k] === 'no' && typeof def.items[Number(k)] === 'string');
+  const yesIdx = Object.keys(entry.answers).filter(k => entry.answers[k] === 'yes' && typeof def.items[Number(k)] === 'string');
   const secIdx = state.sections.indexOf(sec);
   noIdx.forEach(k => {
     sec.findings.push({
       id: uid(),
       number: (secIdx+1) + '.' + (sec.findings.length+1),
-      object: ui.objectRef || '',
+      object: entry.objectRef || '',
       description: def.items[Number(k)],
       responsible:'', deadline:'',
-      photos: (ui.photos[k] || []).slice()
+      photos: (entry.photos[k] || []).slice()
     });
   });
   yesIdx.forEach(k => {
-    const text = (ui.objectRef ? ui.objectRef + ' — ' : '') + def.items[Number(k)];
-    const photosToAdd = ui.photos[k] || [];
+    const text = (entry.objectRef ? entry.objectRef + ' — ' : '') + def.items[Number(k)];
+    const photosToAdd = entry.photos[k] || [];
     const existing = sec.checkedOk.find(x => x.text === text);
     if (existing){
       photosToAdd.forEach(p => { if (!existing.photos.some(x => x.id === p.id)) existing.photos.push(p); });
@@ -1340,26 +1359,48 @@ function applyGlobalChecklist(){
       sec.checkedOk.push({ id: uid(), text, photos: photosToAdd.slice() });
     }
   });
-  ui.answers = {};
-  ui.photos = {};
+  return { no: noIdx.length, yes: yesIdx.length };
+}
+function applyChecklistTool(ui){
+  // Auto-include whatever object is currently in progress, so the last object doesn't need an extra click.
+  if (ui.type) pushCurrentToBatch(ui, { silent:true });
+  if (ui.batch.length === 0){ toast('Отметьте «Да»/«Нет» хотя бы для одного объекта'); return; }
+
+  let sec = null;
+  const wantsNew = (ui.targetSectionId || '__new__') === '__new__';
+  if (!wantsNew) sec = state.sections.find(s => s.id === ui.targetSectionId) || null;
+  if (!sec){
+    sec = { id: uid(), title: (ui.newSectionName || '').trim() || (ui.batch[0] && ui.batch[0].typeLabel) || 'Осмотр объектов', description:'', table:null, findings:[], checkedOk:[] };
+    state.sections.push(sec);
+  }
+  if (!sec.checkedOk) sec.checkedOk = [];
+
+  let totalNo = 0, totalYes = 0;
+  const objectsCount = ui.batch.length;
+  ui.batch.forEach(entry => {
+    const r = commitEntryToSection(sec, entry);
+    totalNo += r.no; totalYes += r.yes;
+  });
+
+  ui.batch = [];
+  ui.type = ''; ui.objectRef = ''; ui.answers = {}; ui.photos = {};
   ui.targetSectionId = sec.id; // keep pointing at this section so repeated batches land in the same place
   renderAll();
   scheduleSave();
-  toast('Добавлено в раздел «' + (sec.title || '') + '»: замечаний — ' + noIdx.length + ', осмотрено без замечаний — ' + yesIdx.length);
+  toast('Добавлено в раздел «' + (sec.title || '') + '»: объектов — ' + objectsCount + ', замечаний — ' + totalNo + ', осмотрено — ' + totalYes);
 }
-const VISIBLE_CHECKLIST_TYPES = ['pb', 'opora', 'psu', 'gpon', 'krt', 'yakg', 'rsh', 'orsh'];
-function renderGlobalChecklistTool(){
-  const container = document.getElementById('globalChecklistContainer');
+function renderChecklistTool(containerId, ui, allowedTypes){
+  const container = document.getElementById(containerId);
+  if (!container) return;
   container.innerHTML = '';
-  const ui = globalChecklistUI;
 
   const row = el('div', {class:'grid'});
   row.appendChild(labeled('Тип чек-листа', plainSelectPairs(ui.type,
-    [['', '— выбрать тип объекта —'], ...VISIBLE_CHECKLIST_TYPES.map(k => [k, CHECKLISTS[k].label])],
+    [['', '— выбрать тип объекта —'], ...allowedTypes.map(k => [k, CHECKLISTS[k].label])],
     v => {
       ui.type = v; ui.answers = {}; ui.photos = {}; ui.filter = '';
       if (!ui.newSectionName && CHECKLISTS[v]) ui.newSectionName = CHECKLISTS[v].label;
-      renderGlobalChecklistTool();
+      renderChecklistTool(containerId, ui, allowedTypes);
     })));
   row.appendChild(labeled('Номер объекта / адрес (общий для всех отмеченных пунктов)',
     plainTextInput(ui.objectRef, v => { ui.objectRef = v; }, 'например «ПСУ №14» или «РШ №3, ул. Абая 12»')));
@@ -1368,17 +1409,43 @@ function renderGlobalChecklistTool(){
   const targetRow = el('div', {class:'grid', style:'margin-top:10px;'});
   const sectionOptions = [['__new__', '+ Новый раздел'], ...state.sections.map(s => [s.id, s.title || 'Без названия'])];
   targetRow.appendChild(labeled('Куда добавить замечания', plainSelectPairs(ui.targetSectionId || '__new__', sectionOptions,
-    v => { ui.targetSectionId = v; renderGlobalChecklistTool(); })));
+    v => { ui.targetSectionId = v; renderChecklistTool(containerId, ui, allowedTypes); })));
   if ((ui.targetSectionId || '__new__') === '__new__'){
     targetRow.appendChild(labeled('Название нового раздела', plainTextInput(ui.newSectionName, v => { ui.newSectionName = v; }, 'Например «Осмотр ПСУ»')));
   }
   container.appendChild(targetRow);
 
+  if (ui.batch.length > 0){
+    const queueWrap = el('div', {style:'margin-top:12px; padding:10px 12px; background:#F6F4EF; border:1px solid var(--line); border-radius:8px;'});
+    const queueHead = el('div', {style:'display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;'});
+    queueHead.appendChild(el('strong', {style:'font-size:12.5px; color:var(--navy);'}, `Объекты в очереди (${ui.batch.length}) — добавятся все сразу по кнопке «Добавить в акт»:`));
+    queueHead.appendChild(el('button', {class:'icon-btn', title:'Очистить очередь', onClick: () => {
+      ui.batch = [];
+      renderChecklistTool(containerId, ui, allowedTypes);
+    }}, 'Очистить'));
+    queueWrap.appendChild(queueHead);
+    ui.batch.forEach((entry, bi) => {
+      const noCount = Object.values(entry.answers).filter(v => v === 'no').length;
+      const yesCount = Object.values(entry.answers).filter(v => v === 'yes').length;
+      const row2 = el('div', {style:'display:flex; justify-content:space-between; align-items:center; font-size:12px; padding:4px 0; border-top:1px solid #E7E2D6;'});
+      row2.appendChild(el('span', {}, `${entry.typeLabel}${entry.objectRef ? ' — ' + entry.objectRef : ''} · замечаний: ${noCount}, осмотрено: ${yesCount}`));
+      row2.appendChild(el('button', {class:'icon-btn', title:'Убрать объект из очереди', onClick: () => {
+        ui.batch.splice(bi, 1);
+        renderChecklistTool(containerId, ui, allowedTypes);
+      }}, '✕'));
+      queueWrap.appendChild(row2);
+    });
+    const queueCommitRow = el('div', {style:'margin-top:8px; padding-top:8px; border-top:1px solid #E7E2D6;'});
+    queueCommitRow.appendChild(el('button', {class:'btn-amber btn-sm', onClick: () => applyChecklistTool(ui)}, 'Добавить в акт'));
+    queueWrap.appendChild(queueCommitRow);
+    container.appendChild(queueWrap);
+  }
+
   if (ui.type && CHECKLISTS[ui.type]){
     const items = CHECKLISTS[ui.type].items;
     if (items.length > 30){
       const filterWrap = el('div', {style:'margin-top:10px;'});
-      filterWrap.appendChild(plainTextInput(ui.filter || '', v => { ui.filter = v; renderGlobalChecklistTool(); }, 'Фильтр: начните вводить слово, например «огнетушит»…'));
+      filterWrap.appendChild(plainTextInput(ui.filter || '', v => { ui.filter = v; renderChecklistTool(containerId, ui, allowedTypes); }, 'Фильтр: начните вводить слово, например «огнетушит»…'));
       container.appendChild(filterWrap);
     }
     const legend = el('div', {style:'display:flex; justify-content:flex-end; gap:14px; font-size:11.5px; color:var(--ink-soft); margin-top:8px;'}, [
@@ -1444,7 +1511,7 @@ function renderGlobalChecklistTool(){
 
       // Optional photo attachment for this item — added/removed in place, no list rebuild.
       const photoRow = el('div', {style:'margin:4px 0 0 0;'});
-      const fileInputId = 'gcf_photo_' + idx;
+      const fileInputId = containerId + '_photo_' + idx;
       const fileLabel = el('label', {class:'btn-outline btn-sm', for:fileInputId, style:'cursor:pointer; display:inline-block; font-weight:600;'}, '📷 Фото');
       const fileInput = el('input', {type:'file', id:fileInputId, accept:'image/*', multiple:'multiple', style:'display:none;'});
       const thumbsWrap = el('div', {class:'thumbs', style:'margin-top:6px;'});
@@ -1479,9 +1546,13 @@ function renderGlobalChecklistTool(){
     }
     container.appendChild(list);
 
-    const actions = el('div', {style:'display:flex; gap:8px; align-items:center; margin-top:10px;'});
-    actions.appendChild(el('button', {class:'btn-amber btn-sm', onClick: applyGlobalChecklist}, 'Добавить отмеченное в акт'));
-    actions.appendChild(el('button', {class:'btn-outline btn-sm', onClick: () => { ui.answers = {}; ui.photos = {}; renderGlobalChecklistTool(); }}, 'Сбросить все ответы'));
+    const actions = el('div', {style:'display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px;'});
+    actions.appendChild(el('button', {class:'btn-outline btn-sm', onClick: () => {
+      const ok = pushCurrentToBatch(ui);
+      if (ok){ renderChecklistTool(containerId, ui, allowedTypes); toast('Объект добавлен в очередь — выберите следующий'); }
+    }}, '+ Добавить следующий объект'));
+    actions.appendChild(el('button', {class:'btn-amber btn-sm', onClick: () => applyChecklistTool(ui)}, 'Добавить в акт'));
+    actions.appendChild(el('button', {class:'btn-outline btn-sm', onClick: () => { ui.answers = {}; ui.photos = {}; renderChecklistTool(containerId, ui, allowedTypes); }}, 'Сбросить ответы по объекту'));
     counterEl = el('span', {style:'font-size:12px; color:var(--ink-soft);'});
     updateCounter();
     actions.appendChild(counterEl);
@@ -1489,6 +1560,12 @@ function renderGlobalChecklistTool(){
   } else {
     container.appendChild(el('p', {class:'empty-hint'}, 'Выберите тип объекта выше, чтобы увидеть пункты чек-листа.'));
   }
+}
+function renderPbChecklistTool(){ renderChecklistTool('pbChecklistContainer', pbChecklistUI, PB_CHECKLIST_TYPES); }
+function renderOuChecklistTool(){ renderChecklistTool('ouChecklistContainer', ouChecklistUI, OU_CHECKLIST_TYPES); }
+function renderAllChecklistTools(){
+  if (document.getElementById('pbChecklistContainer')) renderPbChecklistTool();
+  if (document.getElementById('ouChecklistContainer')) renderOuChecklistTool();
 }
 
 function renderSectionCard(sec, idx){
@@ -1747,7 +1824,7 @@ function renderPlanMeta(){
 /* ============================= FULL RENDER / RESET ============================= */
 function renderAll(){
   renderMeta();
-  renderGlobalChecklistTool();
+  renderAllChecklistTools();
   renderSections();
   renderSignatories();
   renderConclusion();
