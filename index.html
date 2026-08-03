@@ -303,7 +303,13 @@ function migrateState(s){
   if (!s.signatories) s.signatories = d.signatories;
   if (!s.plan) s.plan = d.plan;
   if (!s.sections) s.sections = [];
-  s.sections.forEach(sec => { sec.findings.forEach(f => { f.photos = f.photos || []; }); });
+  s.sections.forEach(sec => {
+    sec.findings.forEach(f => { f.photos = f.photos || []; });
+    sec.checkedOk = (sec.checkedOk || []).map(item =>
+      typeof item === 'string' ? { id: uid(), text: item, photos: [] }
+      : { id: item.id || uid(), text: item.text || '', photos: item.photos || [] }
+    );
+  });
   return s;
 }
 
@@ -433,9 +439,12 @@ function mergeFinding(b, l, r){ b=b||{}; l=l||{}; r=r||{};
   return { id:l.id||r.id||b.id, number:scalarMerge(b.number,l.number,r.number), object:scalarMerge(b.object,l.object,r.object),
     description:scalarMerge(b.description,l.description,r.description), responsible:scalarMerge(b.responsible,l.responsible,r.responsible),
     deadline:scalarMerge(b.deadline,l.deadline,r.deadline), photos:mergeArraysById(b.photos,l.photos,r.photos,mergePhoto) }; }
+function mergeCheckedOkItem(b, l, r){ b=b||{}; l=l||{}; r=r||{};
+  return { id:l.id||r.id||b.id, text:scalarMerge(b.text,l.text,r.text), photos:mergeArraysById(b.photos,l.photos,r.photos,mergePhoto) }; }
 function mergeSection(b, l, r){ b=b||{}; l=l||{}; r=r||{};
   return { id:l.id||r.id||b.id, title:scalarMerge(b.title,l.title,r.title), description:scalarMerge(b.description,l.description,r.description),
-    table:scalarMerge(b.table,l.table,r.table), findings:mergeArraysById(b.findings,l.findings,r.findings,mergeFinding) }; }
+    table:scalarMerge(b.table,l.table,r.table), findings:mergeArraysById(b.findings,l.findings,r.findings,mergeFinding),
+    checkedOk:mergeArraysById(b.checkedOk,l.checkedOk,r.checkedOk,mergeCheckedOkItem) }; }
 function mergeSignatory(b, l, r){ b=b||{}; l=l||{}; r=r||{};
   return { id:l.id||r.id||b.id, position:scalarMerge(b.position,l.position,r.position), name:scalarMerge(b.name,l.name,r.name) }; }
 function mergeViolatedOrder(b, l, r){ b=b||{}; l=l||{}; r=r||{};
@@ -736,7 +745,7 @@ function insertSwapStatsTable(){
         ['Исполнительная документация','','']
       ]
     },
-    findings:[]
+    findings:[], checkedOk:[]
   });
   renderSections();
   scheduleSave();
@@ -745,14 +754,14 @@ function insertSwapStatsTable(){
 function insertSwapQuickStart(){
   ['Исполнительная документация', 'Выборочный осмотр объектов строительства',
    'Осмотр оптических распределительных муфт на ПСУ и опорах связи'].forEach(t => {
-    state.sections.push({ id: uid(), title:t, description:'', table:null, findings:[] });
+    state.sections.push({ id: uid(), title:t, description:'', table:null, findings:[], checkedOk:[] });
   });
   renderSections();
   scheduleSave();
   toast('Добавлены типовые разделы акта СВАП');
 }
 function addSection(){
-  state.sections.push({ id: uid(), title:'', description:'', table:null, findings:[] });
+  state.sections.push({ id: uid(), title:'', description:'', table:null, findings:[], checkedOk:[] });
   renderSections();
   scheduleSave();
 }
@@ -1277,7 +1286,7 @@ const CHECKLISTS = {
 };
 // Transient UI-only state for the checklist tool (not part of saved/shared act data — it's just a quick-entry helper).
 // It's global now (one tool, own top-level card) rather than duplicated inside every section.
-const globalChecklistUI = { type:'', objectRef:'', answers:{}, filter:'', targetSectionId:'__new__', newSectionName:'' };
+const globalChecklistUI = { type:'', objectRef:'', answers:{}, photos:{}, filter:'', targetSectionId:'__new__', newSectionName:'' };
 function plainTextInput(value, onInput, placeholder){
   const i = el('input', {type:'text', class:'input', placeholder: placeholder || ''});
   i.value = value || '';
@@ -1299,15 +1308,17 @@ function applyGlobalChecklist(){
   const def = CHECKLISTS[ui.type];
   if (!def){ toast('Сначала выберите тип чек-листа'); return; }
   const noIdx = Object.keys(ui.answers).filter(k => ui.answers[k] === 'no' && typeof def.items[Number(k)] === 'string');
-  if (noIdx.length === 0){ toast('Отметьте «Нет» хотя бы для одного пункта'); return; }
+  const yesIdx = Object.keys(ui.answers).filter(k => ui.answers[k] === 'yes' && typeof def.items[Number(k)] === 'string');
+  if (noIdx.length === 0 && yesIdx.length === 0){ toast('Отметьте «Да» или «Нет» хотя бы для одного пункта'); return; }
 
   let sec = null;
   const wantsNew = (ui.targetSectionId || '__new__') === '__new__';
   if (!wantsNew) sec = state.sections.find(s => s.id === ui.targetSectionId) || null;
   if (!sec){
-    sec = { id: uid(), title: (ui.newSectionName || '').trim() || def.label, description:'', table:null, findings:[] };
+    sec = { id: uid(), title: (ui.newSectionName || '').trim() || def.label, description:'', table:null, findings:[], checkedOk:[] };
     state.sections.push(sec);
   }
+  if (!sec.checkedOk) sec.checkedOk = [];
   const secIdx = state.sections.indexOf(sec);
   noIdx.forEach(k => {
     sec.findings.push({
@@ -1315,14 +1326,26 @@ function applyGlobalChecklist(){
       number: (secIdx+1) + '.' + (sec.findings.length+1),
       object: ui.objectRef || '',
       description: def.items[Number(k)],
-      responsible:'', deadline:'', photos:[]
+      responsible:'', deadline:'',
+      photos: (ui.photos[k] || []).slice()
     });
   });
+  yesIdx.forEach(k => {
+    const text = (ui.objectRef ? ui.objectRef + ' — ' : '') + def.items[Number(k)];
+    const photosToAdd = ui.photos[k] || [];
+    const existing = sec.checkedOk.find(x => x.text === text);
+    if (existing){
+      photosToAdd.forEach(p => { if (!existing.photos.some(x => x.id === p.id)) existing.photos.push(p); });
+    } else {
+      sec.checkedOk.push({ id: uid(), text, photos: photosToAdd.slice() });
+    }
+  });
   ui.answers = {};
+  ui.photos = {};
   ui.targetSectionId = sec.id; // keep pointing at this section so repeated batches land in the same place
   renderAll();
   scheduleSave();
-  toast('Добавлено замечаний: ' + noIdx.length + ' → раздел «' + (sec.title || '') + '»');
+  toast('Добавлено в раздел «' + (sec.title || '') + '»: замечаний — ' + noIdx.length + ', осмотрено без замечаний — ' + yesIdx.length);
 }
 const VISIBLE_CHECKLIST_TYPES = ['pb']; // only fire/industrial safety (ПБ) is offered in section 2 for now
 function renderGlobalChecklistTool(){
@@ -1334,7 +1357,7 @@ function renderGlobalChecklistTool(){
   row.appendChild(labeled('Тип чек-листа', plainSelectPairs(ui.type,
     [['', '— выбрать тип объекта —'], ...VISIBLE_CHECKLIST_TYPES.map(k => [k, CHECKLISTS[k].label])],
     v => {
-      ui.type = v; ui.answers = {}; ui.filter = '';
+      ui.type = v; ui.answers = {}; ui.photos = {}; ui.filter = '';
       if (!ui.newSectionName && CHECKLISTS[v]) ui.newSectionName = CHECKLISTS[v].label;
       renderGlobalChecklistTool();
     })));
@@ -1359,7 +1382,7 @@ function renderGlobalChecklistTool(){
       container.appendChild(filterWrap);
     }
     const legend = el('div', {style:'display:flex; justify-content:flex-end; gap:14px; font-size:11.5px; color:var(--ink-soft); margin-top:8px;'}, [
-      el('span', {}, '«Да» — соответствует / имеется'),
+      el('span', {}, '«Да» — соответствует / имеется → в акт как «осмотрено, замечаний нет»'),
       el('span', {}, '«Нет» — не соответствует / отсутствует → станет замечанием')
     ]);
     container.appendChild(legend);
@@ -1367,12 +1390,16 @@ function renderGlobalChecklistTool(){
     const list = el('div', {style:'margin-top:6px; display:flex; flex-direction:column; gap:2px; max-height:420px; overflow:auto; padding-right:6px;'});
     let visibleCount = 0;
     let pendingHeader = null;
-    let noCounterEl = null;
-    function currentNoCount(){
-      return Object.values(ui.answers).filter(v => v === 'no').length;
+    let counterEl = null;
+    function currentCounts(){
+      const vals = Object.values(ui.answers);
+      return { yes: vals.filter(v => v === 'yes').length, no: vals.filter(v => v === 'no').length };
     }
-    function updateNoCounter(){
-      if (noCounterEl) noCounterEl.textContent = 'Отмечено «Нет»: ' + currentNoCount();
+    function updateCounter(){
+      if (counterEl){
+        const c = currentCounts();
+        counterEl.textContent = `Отмечено: «Да» — ${c.yes}, «Нет» — ${c.no}`;
+      }
     }
     items.forEach((entry, idx) => {
       if (entry && typeof entry === 'object' && entry.header){
@@ -1387,7 +1414,8 @@ function renderGlobalChecklistTool(){
       }
       visibleCount++;
       const current = ui.answers[idx];
-      const line = el('div', {style:'display:flex; gap:10px; align-items:center; font-size:12.5px; line-height:1.4; padding:5px 0; border-bottom:1px solid #F0F2F4;'});
+      const itemWrap = el('div', {style:'padding:5px 0; border-bottom:1px solid #F0F2F4;'});
+      const line = el('div', {style:'display:flex; gap:10px; align-items:center; font-size:12.5px; line-height:1.4;'});
       const textSpan = el('span', {style:'flex:1;'}, text);
       const btnGroup = el('div', {style:'display:flex; gap:4px; flex:none;'});
       const yesBtn = el('button', {type:'button', class:'ans-btn' + (current === 'yes' ? ' ans-yes-active' : '')}, 'Да');
@@ -1399,20 +1427,52 @@ function renderGlobalChecklistTool(){
         ui.answers[idx] = now;
         yesBtn.classList.toggle('ans-yes-active', now === 'yes');
         noBtn.classList.remove('ans-no-active');
-        updateNoCounter();
+        updateCounter();
       });
       noBtn.addEventListener('click', () => {
         const now = ui.answers[idx] === 'no' ? undefined : 'no';
         ui.answers[idx] = now;
         noBtn.classList.toggle('ans-no-active', now === 'no');
         yesBtn.classList.remove('ans-yes-active');
-        updateNoCounter();
+        updateCounter();
       });
       btnGroup.appendChild(yesBtn);
       btnGroup.appendChild(noBtn);
       line.appendChild(textSpan);
       line.appendChild(btnGroup);
-      list.appendChild(line);
+      itemWrap.appendChild(line);
+
+      // Optional photo attachment for this item — added/removed in place, no list rebuild.
+      const photoRow = el('div', {style:'margin:4px 0 0 0;'});
+      const fileInputId = 'gcf_photo_' + idx;
+      const fileLabel = el('label', {class:'btn-outline btn-sm', for:fileInputId, style:'cursor:pointer; display:inline-block; font-weight:600;'}, '📷 Фото');
+      const fileInput = el('input', {type:'file', id:fileInputId, accept:'image/*', multiple:'multiple', style:'display:none;'});
+      const thumbsWrap = el('div', {class:'thumbs', style:'margin-top:6px;'});
+      function refreshThumbs(){
+        thumbsWrap.innerHTML = '';
+        (ui.photos[idx] || []).forEach(p => {
+          const t = el('div', {class:'thumb'});
+          t.appendChild(el('img', {src:p.dataUrl, alt:p.name}));
+          t.appendChild(el('button', {class:'rm', title:'Удалить фото', onClick: () => {
+            ui.photos[idx] = (ui.photos[idx] || []).filter(x => x.id !== p.id);
+            refreshThumbs();
+          }}, '✕'));
+          thumbsWrap.appendChild(t);
+        });
+      }
+      fileInput.addEventListener('change', e => {
+        if (!ui.photos[idx]) ui.photos[idx] = [];
+        const fakeFinding = { photos: ui.photos[idx] };
+        handleFiles(fakeFinding, e.target.files, () => refreshThumbs());
+        e.target.value = '';
+      });
+      refreshThumbs();
+      photoRow.appendChild(fileLabel);
+      photoRow.appendChild(fileInput);
+      photoRow.appendChild(thumbsWrap);
+      itemWrap.appendChild(photoRow);
+
+      list.appendChild(itemWrap);
     });
     if (visibleCount === 0){
       list.appendChild(el('p', {class:'empty-hint'}, 'Ничего не найдено по фильтру.'));
@@ -1420,10 +1480,11 @@ function renderGlobalChecklistTool(){
     container.appendChild(list);
 
     const actions = el('div', {style:'display:flex; gap:8px; align-items:center; margin-top:10px;'});
-    actions.appendChild(el('button', {class:'btn-amber btn-sm', onClick: applyGlobalChecklist}, 'Добавить отмеченные «Нет» как замечания'));
-    actions.appendChild(el('button', {class:'btn-outline btn-sm', onClick: () => { ui.answers = {}; renderGlobalChecklistTool(); }}, 'Сбросить все ответы'));
-    noCounterEl = el('span', {style:'font-size:12px; color:var(--ink-soft);'}, 'Отмечено «Нет»: ' + currentNoCount());
-    actions.appendChild(noCounterEl);
+    actions.appendChild(el('button', {class:'btn-amber btn-sm', onClick: applyGlobalChecklist}, 'Добавить отмеченное в акт'));
+    actions.appendChild(el('button', {class:'btn-outline btn-sm', onClick: () => { ui.answers = {}; ui.photos = {}; renderGlobalChecklistTool(); }}, 'Сбросить все ответы'));
+    counterEl = el('span', {style:'font-size:12px; color:var(--ink-soft);'});
+    updateCounter();
+    actions.appendChild(counterEl);
     container.appendChild(actions);
   } else {
     container.appendChild(el('p', {class:'empty-hint'}, 'Выберите тип объекта выше, чтобы увидеть пункты чек-листа.'));
@@ -1899,6 +1960,20 @@ async function generateDocx(){
     if (sec.description) parts.push(paragraph(sec.description, { align:'both' }));
     if (sec.table && sec.table.headers.length){
       parts.push(tableXml(sec.table.headers, sec.table.rows));
+    }
+    if (sec.checkedOk && sec.checkedOk.length){
+      parts.push(paragraph('Осмотрено, соответствует норме (замечаний не выявлено):', { bold:true, align:'left', spacingAfter:60 }));
+      sec.checkedOk.forEach(item => {
+        parts.push(paragraph('— ' + item.text, { align:'both', size:20, spacingAfter:60 }));
+        (item.photos || []).forEach(p => {
+          const ext = extFromMime(p.mime);
+          const filename = `image${relCounter}.${ext}`;
+          const relId = `rId${relCounter}`;
+          relCounter++;
+          mediaFiles.push({ relId, filename, mime:p.mime, bytes: dataUrlToBytes(p.dataUrl) });
+          parts.push(imageParagraphXml(relId, p.width, p.height, 3600000));
+        });
+      });
     }
     if (sec.findings.length){
       parts.push(paragraph('Замечания:', { bold:true, align:'left', spacingAfter:80 }));
