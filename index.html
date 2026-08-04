@@ -657,7 +657,8 @@ async function loadDraft(){
       }
       return true;
     }catch(e){
-      toast('Нет связи с Google Таблицей — показан последний вариант, сохранённый в этом браузере');
+      toast('Нет связи с Google Таблицей (' + e.message + ') — показан последний вариант, сохранённый в этом браузере');
+      console.error('loadDraft fetch error:', e);
     }
   } else {
     showSetupBanner();
@@ -2257,6 +2258,7 @@ function xlsxRootRelsXml(){
 function xlsxWorkbookXml(sheetName){
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<bookViews><workbookView activeTab="0"/></bookViews>
 <sheets><sheet name="${escapeXml(sheetName)}" sheetId="1" r:id="rId1"/></sheets>
 </workbook>`;
 }
@@ -2270,6 +2272,8 @@ function xlsxWorkbookRelsXml(){
 // rows: array of arrays of cell objects {v:text, s:styleIndex, n:isNumeric}
 // merges: array of "A1:D1" strings ; colWidths: array of numbers ; rowHeights: map rowIndex(0-based)->points
 function xlsxSheetXml(rows, merges, colWidths, rowHeights){
+  const lastCol = colLetter(colWidths.length - 1);
+  const lastRow = Math.max(1, rows.length);
   const colsXml = '<cols>' + colWidths.map((w,i) => `<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('') + '</cols>';
   const dataXml = rows.map((row, rIdx) => {
     const rNum = rIdx + 1;
@@ -2286,10 +2290,15 @@ function xlsxSheetXml(rows, merges, colWidths, rowHeights){
     return `<row r="${rNum}"${htAttr}>${cellsXml}</row>`;
   }).join('');
   const mergeXml = merges.length ? `<mergeCells count="${merges.length}">${merges.map(m => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>` : '';
+  // Element order below follows the strict CT_Worksheet sequence (dimension, sheetViews, cols, sheetData,
+  // ..., mergeCells) — some viewers (mobile/tablet Office apps, other spreadsheet apps) reject the file
+  // as corrupted if this order is wrong, even though desktop Excel tolerates it.
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<dimension ref="A1:${lastCol}${lastRow}"/>
+<sheetViews><sheetView workbookViewId="0"><pane ySplit="7" topLeftCell="A8" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+<sheetFormatPr defaultRowHeight="15"/>
 ${colsXml}
-<sheetViews><sheetView><pane ySplit="7" topLeftCell="A8" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
 <sheetData>${dataXml}</sheetData>
 ${mergeXml}
 </worksheet>`;
