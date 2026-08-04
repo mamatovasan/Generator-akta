@@ -614,24 +614,56 @@ function flushIfDirty(){
     doSaveNow();
   }
 }
+// Used specifically when the page is actually being torn down (beforeunload/pagehide). doSaveNow() does a
+// GET (fetch remote) -> merge -> POST round trip, which is too slow to finish before the browser kills the
+// page — that's why edits were getting lost when someone closed the tab right after typing. sendBeacon is
+// designed exactly for this: the browser guarantees it will try to deliver the request even after the page
+// is gone, so we skip the merge step here and just push the local snapshot directly. Any conflict with a
+// colleague's simultaneous edit gets resolved by the normal 3-way merge the next time either device loads.
+function beaconFlush(){
+  if (!dirtySinceSave) return;
+  clearTimeout(saveTimer);
+  const snapshot = JSON.stringify(state);
+  try{ idbSet(IDB_KEY(), snapshot); }catch(e){ /* best-effort, may not finish in time */ }
+  if (WEBAPP_URL && navigator.sendBeacon){
+    try{
+      const blob = new Blob([snapshot], { type: 'text/plain;charset=utf-8' });
+      navigator.sendBeacon(webAppUrl(), blob);
+    }catch(e){ /* ignore — local IndexedDB write above is still our fallback */ }
+  }
+}
 window.addEventListener('beforeunload', (e) => {
   if (dirtySinceSave){
-    flushIfDirty();
+    beaconFlush();
     e.preventDefault();
     e.returnValue = '';
   }
 });
 document.addEventListener('visibilitychange', () => {
+  // The page usually stays alive for a bit after going hidden (tab switch, app switch, screen lock), so
+  // there's time for the normal merge-based save here — this avoids needlessly overwriting a colleague's
+  // concurrent edit with the beacon's no-merge write.
   if (document.visibilityState === 'hidden') flushIfDirty();
 });
-window.addEventListener('pagehide', flushIfDirty);
-window.addEventListener('focus', async () => {
-  if (dirtySinceSave) return;
-  const fresh = await loadDraft();
-  if (fresh){ renderAll(); }
-});
+window.addEventListener('pagehide', beaconFlush);
+window.addEventListener('focus', async () => { await refreshFromServerIfChanged(); });
 window.addEventListener('offline', () => { toast('Соединение потеряно — черновик продолжает сохраняться локально в этом браузере'); });
 
+// Re-render only if the fetched draft actually differs from what's on screen, and restore the scroll
+// position afterwards. Without this, every periodic refresh (or window focus) rebuilds the whole checklist
+// from scratch and silently jumps the page back to the top — even when nothing had actually changed.
+async function refreshFromServerIfChanged(){
+  if (dirtySinceSave) return;
+  const active = document.activeElement;
+  if (active && ['INPUT','TEXTAREA','SELECT'].includes(active.tagName)) return; // don't yank focus while typing
+  const before = JSON.stringify(state);
+  const loaded = await loadDraft();
+  if (loaded && JSON.stringify(state) !== before){
+    renderAll();
+  }
+}
+
+let wasConnectedToSheet = true;
 async function loadDraft(){
   let localCache = null, baseCache = null;
   try{ const raw = await idbGet(IDB_KEY()); if (raw) localCache = migrateState(JSON.parse(raw)); }catch(e){}
@@ -655,10 +687,19 @@ async function loadDraft(){
       if (localCache && JSON.stringify(finalState) !== JSON.stringify(remote)){
         doSaveNow(); // recovered edits the server didn't have yet — push them now
       }
+      if (!wasConnectedToSheet){
+        toast('Связь с Google Таблицей восстановлена');
+        wasConnectedToSheet = true;
+      }
       return true;
     }catch(e){
-      toast('Нет связи с Google Таблицей (' + e.message + ') — показан последний вариант, сохранённый в этом браузере');
-      console.error('loadDraft fetch error:', e);
+      // This fires on every failed poll (every few seconds while offline), so only surface it once per
+      // outage instead of flooding the user with a toast and the console with an error each attempt.
+      if (wasConnectedToSheet){
+        toast('Нет связи с Google Таблицей (' + e.message + ') — показан последний вариант, сохранённый в этом браузере');
+        console.error('loadDraft fetch error:', e);
+        wasConnectedToSheet = false;
+      }
     }
   } else {
     showSetupBanner();
@@ -1898,12 +1939,17 @@ function renderPlanMeta(){
 
 /* ============================= FULL RENDER / RESET ============================= */
 function renderAll(){
+  // Rebuilding the DOM (below) resets scroll to the top in most browsers. renderAll can be triggered while
+  // someone is mid-scroll reading the checklist (periodic refresh, window focus, sync switch), so we save
+  // and restore the scroll position every time as a safety net.
+  const scrollY = window.scrollY;
   renderMeta();
   renderAllChecklistTools();
   renderSections();
   renderSignatories();
   renderConclusion();
   renderPlanMeta();
+  window.scrollTo(0, scrollY);
 }
 
 document.getElementById('addSectionBtn').addEventListener('click', addSection);
@@ -2438,13 +2484,17 @@ updateSyncButtonLabel();
 
 // Poll periodically so a paired device picks up the other one's changes without needing a manual refresh.
 // Skipped whenever there are unsaved local edits, so we never overwrite work in progress mid-typing.
-setInterval(async () => {
-  if (dirtySinceSave) return;
-  const active = document.activeElement;
-  if (active && ['INPUT','TEXTAREA','SELECT'].includes(active.tagName)) return; // don't yank focus while typing
-  const fresh = await loadDraft();
-  if (fresh) renderAll();
-}, 8000);
+// Polls the shared draft periodically, backing off when the connection is down so a persistent outage
+// doesn't mean a network request (and a console error) every 8 seconds forever.
+let pollDelay = 8000;
+const POLL_DELAY_MIN = 8000, POLL_DELAY_MAX = 120000;
+async function pollLoop(){
+  const wasConnected = wasConnectedToSheet;
+  await refreshFromServerIfChanged();
+  pollDelay = wasConnectedToSheet ? POLL_DELAY_MIN : Math.min(POLL_DELAY_MAX, pollDelay * 2);
+  setTimeout(pollLoop, pollDelay);
+}
+setTimeout(pollLoop, pollDelay);
 
 /* ============================= INIT ============================= */
 (async function init(){
