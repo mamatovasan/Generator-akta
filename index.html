@@ -155,31 +155,9 @@
   </div>
   <div class="actions">
     <span class="status-pill" id="statusPill">черновик не сохранён</span>
-    <button class="btn-ghost btn-sm" id="btnSync">🔗 Синхронизация</button>
     <button class="btn-ghost btn-sm" id="btnNewAct">Новый акт</button>
     <button class="btn-outline" id="btnGenDocx">Скачать Акт (Word)</button>
     <button class="btn-amber" id="btnGenXlsx">Скачать План (Excel)</button>
-  </div>
-</div>
-
-<div id="syncModalOverlay" style="display:none; position:fixed; inset:0; background:rgba(19,42,62,0.55); z-index:300; align-items:center; justify-content:center;">
-  <div style="background:#fff; border-radius:12px; padding:22px 24px; max-width:420px; width:92%; box-shadow:0 20px 50px rgba(0,0,0,.3);">
-    <h2 style="margin:0 0 6px; font-family:var(--serif); color:var(--navy); font-size:18px;">Синхронизация устройств</h2>
-    <p style="margin:0 0 14px; font-size:12.5px; color:var(--ink-soft); line-height:1.5;">
-      Введите один и тот же код на планшете и на телефоне (например «911») — оба устройства будут показывать
-      один и тот же акт и подтягивать изменения друг друга. Удобно: замечания печатать на планшете, а фото
-      сразу делать на телефоне (камера обычно лучше).
-    </p>
-    <div id="syncCurrentStatus" style="font-size:12.5px; margin-bottom:10px;"></div>
-    <label class="field" style="margin-bottom:14px;">
-      <span>Код синхронизации (цифры/буквы)</span>
-      <input class="input" id="syncCodeInput" type="text" inputmode="numeric" placeholder="например 911" maxlength="12">
-    </label>
-    <div style="display:flex; gap:8px; justify-content:flex-end;">
-      <button class="btn-outline btn-sm" id="syncCloseBtn">Закрыть</button>
-      <button class="btn-danger-outline btn-sm" id="syncDisconnectBtn">Отключить</button>
-      <button class="btn-amber btn-sm" id="syncConnectBtn">Подключиться</button>
-    </div>
   </div>
 </div>
 
@@ -257,11 +235,10 @@
   </div>
 
   <footer class="note">
-    Черновик (текст и фотографии) — общий: сохраняется на общем сервере и виден на любом устройстве и любому, кто
-    откроет эту страницу. Двое сотрудников могут одновременно заполнять разные разделы/замечания — при сохранении
-    правки автоматически объединяются (каждый видит и свои, и чужие изменения), а не перезаписывают друг друга.
-    Сбрасывается только по кнопке «Новый акт». Если пропадёт интернет, изменения на время останутся только в этом
-    браузере и досохранятся, когда сеть вернётся.
+    Черновик (текст и фотографии) сохраняется прямо в этом браузере — работает полностью без интернета и не
+    пропадает после закрытия вкладки, перезагрузки страницы или отключения сети. Хранится только на этом
+    устройстве и в этом браузере: если открыть сайт в другом браузере или на другом устройстве, черновика там
+    не будет — используйте один и тот же браузер, чтобы продолжить работу над актом.
   </footer>
 </main>
 
@@ -342,73 +319,13 @@ function migrateState(s){
   return s;
 }
 
-/* ============================= SHARED STORAGE (Google Таблица через Apps Script) =============================
-   КАК ЭТО РАБОТАЕТ: одна Google Таблица может хранить НЕСКОЛЬКО независимых черновиков — по одному на каждый
-   "код синхронизации". Устройства с одинаковым кодом видят и правят один и тот же акт; с разными кодами —
-   работают каждое со своим, никак не пересекаясь. Без кода используется общий черновик "default" (как раньше).
-
-   ОДНОРАЗОВАЯ НАСТРОЙКА (5 минут, только Google-аккаунт, без иных регистраций):
-   1. Откройте sheets.google.com → создайте новую пустую таблицу (например «Акт — черновики»).
-   2. Меню «Расширения» → «Apps Script».
-   3. Удалите весь код по умолчанию и вставьте вместо него:
-
-        function getSheet_() {
-          var ss = SpreadsheetApp.getActiveSpreadsheet();
-          var sh = ss.getSheetByName('drafts');
-          if (!sh) { sh = ss.insertSheet('drafts'); sh.appendRow(['code','json','updatedAt']); }
-          return sh;
-        }
-        function findRow_(sh, code) {
-          var data = sh.getDataRange().getValues();
-          for (var i = 1; i < data.length; i++) { if (String(data[i][0]) === String(code)) return i + 1; }
-          return null;
-        }
-        function doGet(e) {
-          var code = (e.parameter.code || 'default');
-          var sh = getSheet_();
-          var row = findRow_(sh, code);
-          var val = row ? sh.getRange(row, 2).getValue() : '{}';
-          return ContentService.createTextOutput(val || '{}').setMimeType(ContentService.MimeType.JSON);
-        }
-        function doPost(e) {
-          var code = (e.parameter.code || 'default');
-          var sh = getSheet_();
-          var row = findRow_(sh, code);
-          if (row) { sh.getRange(row, 2).setValue(e.postData.contents); sh.getRange(row, 3).setValue(new Date()); }
-          else { sh.appendRow([code, e.postData.contents, new Date()]); }
-          return ContentService.createTextOutput(JSON.stringify({ok:true})).setMimeType(ContentService.MimeType.JSON);
-        }
-
-   4. «Развернуть» (Deploy) → «Новое развёртывание» → тип «Веб-приложение» (Web app).
-      Выполнять как: «Я» (Me). Доступ: «Все» / «Anyone».
-   5. Нажмите «Развернуть», разрешите доступ (это ваш собственный скрипт — предупреждение нормальное).
-   6. Скопируйте URL веб-приложения (заканчивается на /exec) и вставьте его ниже вместо '' в WEBAPP_URL —
-      либо пришлите этот URL в чат, и его впишут за вас.
-      Если WEBAPP_URL уже был вставлен раньше (старая однокодовая версия скрипта) — просто замените код в
-      Apps Script на этот новый и создайте новую версию развёртывания (Deploy → Manage deployments → Edit →
-      Version: New version) — URL остаётся тем же, ничего на сайте менять не нужно.
-
-   ОГРАНИЧЕНИЯ: пока WEBAPP_URL пустой — общего хранилища ещё нет, работает только локальный кэш в этом браузере.
-   Таблица не защищена паролем отдельно от самого веб-приложения (это тот же уровень доступа, что и у самого сайта);
-   код синхронизации — это просто способ не путать черновики разных бригад, а не пароль.
-   Если два человека сохраняют одновременно — побеждает тот, кто сохранил позже (без слияния правок).
-   При пропадании интернета черновик на время остаётся только в этом браузере (IndexedDB) и досохраняется, когда
-   сеть вернётся. */
-const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbzj1bH2QYbxYeK-3eUbXiJ4zBMhKq6dPk5446hTVX0J2LTE6Firos1ts_hFVG6Y8uHrRA/exec';
-
-// Sync code ("room"): devices sharing the same code read/write the same draft. Stored locally per-device
-// so it doesn't need to be re-entered on every visit.
-let syncCode = '';
-try{ syncCode = (localStorage.getItem('sync_code') || '').trim(); }catch(e){}
-function webAppUrl(){
-  const code = syncCode || 'default';
-  return WEBAPP_URL + (WEBAPP_URL.indexOf('?') >= 0 ? '&' : '?') + 'code=' + encodeURIComponent(code);
-}
-
+/* ============================= LOCAL STORAGE (IndexedDB) — works fully offline, no internet needed.
+   The whole draft (text + photos) is saved in this browser only, and reloads automatically next time
+   this device opens the page — even after closing the tab/browser or losing internet. There is no
+   sharing between devices; each device keeps its own draft. ============================= */
 const IDB_NAME = 'akt_generator_db';
 const IDB_STORE = 'kv';
-function IDB_KEY(){ return 'act_draft_cache_v1__' + (syncCode || 'default'); }
-function IDB_BASE_KEY(){ return 'act_draft_base_v1__' + (syncCode || 'default'); }
+function IDB_KEY(){ return 'act_draft_cache_v1'; }
 let dbPromise = null;
 
 function openDB(){
@@ -439,93 +356,6 @@ function idbGet(key){
   }));
 }
 
-let bannerShown = false;
-function showSetupBanner(){
-  if (bannerShown) return;
-  bannerShown = true;
-  const bar = el('div', {
-    style:'position:fixed; top:0; left:0; right:0; z-index:200; background:#B5822C; color:#fff; padding:10px 16px;'
-      + 'font-size:13px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; box-shadow:0 2px 8px rgba(0,0,0,.2);'
-  }, [
-    el('strong', {}, 'Общее хранилище (Google Таблица) ещё не подключено.'),
-    el('span', {}, 'Пока сохраняется только в этом браузере. См. инструкцию в коде (WEBAPP_URL) или напишите разработчику URL веб-приложения.'),
-    el('button', {class:'icon-btn', style:'color:#fff; margin-left:auto;', onClick: (e) => e.target.closest('div').remove()}, '✕')
-  ]);
-  document.body.prepend(bar);
-}
-
-/* ============================= 3-WAY MERGE (lets two people edit different parts at the same time without one
-   overwriting the other). We remember the state as it was right after the last successful load/save ("base").
-   On every save we fetch the current shared copy ("remote") and merge it with our in-memory copy ("local"):
-   for any single field, if OUR copy didn't change it since base, we take THEIRS; if we did change it, we keep ours.
-   Sections/findings/photos/signatories are matched by id, so new items from either side are kept and real
-   deletions are still respected when nobody touched that item elsewhere. ============================= */
-let baseState = null;
-function cloneJson(x){ return JSON.parse(JSON.stringify(x)); }
-function scalarMerge(b, l, r){
-  return (JSON.stringify(l) === JSON.stringify(b)) ? r : l;
-}
-function mergeArraysById(baseArr, localArr, remoteArr, mergeItemFn){
-  baseArr = baseArr || []; localArr = localArr || []; remoteArr = remoteArr || [];
-  const baseMap = new Map(baseArr.map(x => [x.id, x]));
-  const localMap = new Map(localArr.map(x => [x.id, x]));
-  const remoteMap = new Map(remoteArr.map(x => [x.id, x]));
-  const order = []; const seen = new Set();
-  localArr.forEach(x => { if (!seen.has(x.id)){ order.push(x.id); seen.add(x.id); } });
-  remoteArr.forEach(x => { if (!seen.has(x.id)){ order.push(x.id); seen.add(x.id); } });
-  const result = [];
-  order.forEach(id => {
-    const b = baseMap.get(id), l = localMap.get(id), r = remoteMap.get(id);
-    if (l && r){
-      result.push(mergeItemFn(b, l, r));
-    } else if (l && !r){
-      const deletedRemotely = b && JSON.stringify(b) === JSON.stringify(l);
-      if (!deletedRemotely) result.push(l);
-    } else if (r && !l){
-      const deletedLocally = b && JSON.stringify(b) === JSON.stringify(r);
-      if (!deletedLocally) result.push(r);
-    }
-  });
-  return result;
-}
-function mergePhoto(b, l, r){ b=b||{}; l=l||{}; r=r||{};
-  return { id:l.id||r.id||b.id, name:scalarMerge(b.name,l.name,r.name), mime:scalarMerge(b.mime,l.mime,r.mime),
-    dataUrl:scalarMerge(b.dataUrl,l.dataUrl,r.dataUrl), width:scalarMerge(b.width,l.width,r.width), height:scalarMerge(b.height,l.height,r.height) }; }
-function mergeFinding(b, l, r){ b=b||{}; l=l||{}; r=r||{};
-  return { id:l.id||r.id||b.id, number:scalarMerge(b.number,l.number,r.number), object:scalarMerge(b.object,l.object,r.object),
-    description:scalarMerge(b.description,l.description,r.description), responsible:scalarMerge(b.responsible,l.responsible,r.responsible),
-    deadline:scalarMerge(b.deadline,l.deadline,r.deadline), photos:mergeArraysById(b.photos,l.photos,r.photos,mergePhoto) }; }
-function mergeCheckedOkItem(b, l, r){ b=b||{}; l=l||{}; r=r||{};
-  return { id:l.id||r.id||b.id, text:scalarMerge(b.text,l.text,r.text), photos:mergeArraysById(b.photos,l.photos,r.photos,mergePhoto) }; }
-function mergeSection(b, l, r){ b=b||{}; l=l||{}; r=r||{};
-  return { id:l.id||r.id||b.id, title:scalarMerge(b.title,l.title,r.title), description:scalarMerge(b.description,l.description,r.description),
-    table:scalarMerge(b.table,l.table,r.table), findings:mergeArraysById(b.findings,l.findings,r.findings,mergeFinding),
-    checkedOk:mergeArraysById(b.checkedOk,l.checkedOk,r.checkedOk,mergeCheckedOkItem) }; }
-function mergeSignatory(b, l, r){ b=b||{}; l=l||{}; r=r||{};
-  return { id:l.id||r.id||b.id, position:scalarMerge(b.position,l.position,r.position), name:scalarMerge(b.name,l.name,r.name) }; }
-function mergeViolatedOrder(b, l, r){ b=b||{}; l=l||{}; r=r||{};
-  return { id:l.id||r.id||b.id, reference:scalarMerge(b.reference,l.reference,r.reference), detail:scalarMerge(b.detail,l.detail,r.detail) }; }
-function mergeKeyedObject(b, l, r){
-  b=b||{}; l=l||{}; r=r||{};
-  const keys = new Set([...Object.keys(b), ...Object.keys(l), ...Object.keys(r)]);
-  const out = {};
-  keys.forEach(k => { out[k] = scalarMerge(b[k], l[k], r[k]); });
-  return out;
-}
-function mergeStates(base, local, remote){
-  base = base || defaultState();
-  return {
-    meta: mergeKeyedObject(base.meta, local.meta, remote.meta),
-    sections: mergeArraysById(base.sections, local.sections, remote.sections, mergeSection),
-    conclusion: scalarMerge(base.conclusion, local.conclusion, remote.conclusion),
-    recommendation: scalarMerge(base.recommendation, local.recommendation, remote.recommendation),
-    violatedOrders: mergeArraysById(base.violatedOrders, local.violatedOrders, remote.violatedOrders, mergeViolatedOrder),
-    deadlineNote: scalarMerge(base.deadlineNote, local.deadlineNote, remote.deadlineNote),
-    signatories: mergeArraysById(base.signatories, local.signatories, remote.signatories, mergeSignatory),
-    plan: mergeKeyedObject(base.plan, local.plan, remote.plan)
-  };
-}
-
 let saveTimer = null;
 let dirtySinceSave = false;
 function scheduleSave(){
@@ -533,182 +363,50 @@ function scheduleSave(){
   const pill = document.getElementById('statusPill');
   pill.textContent = 'сохранение…';
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(doSaveNow, 700);
+  saveTimer = setTimeout(doSaveNow, 500);
 }
 async function doSaveNow(){
   const pill = document.getElementById('statusPill');
-  const localSnapshot = cloneJson(state);
-  try{ await idbSet(IDB_KEY(), JSON.stringify(localSnapshot)); }catch(e){ /* local cache best-effort */ }
-  if (!WEBAPP_URL){
-    showSetupBanner();
-    dirtySinceSave = false;
-    baseState = localSnapshot;
-    try{ await idbSet(IDB_BASE_KEY(), JSON.stringify(baseState)); }catch(e){}
-    pill.textContent = 'сохранено только локально (нет общего хранилища) · ' + new Date().toLocaleTimeString('ru-RU');
-    return;
-  }
   try{
-    // Fetch the current shared copy first so simultaneous edits by a colleague get merged, not overwritten.
-    const getRes = await fetch(webAppUrl(), { method:'GET' });
-    let remote = null;
-    if (getRes.ok){ try{ remote = migrateState(await getRes.json()); }catch(e){ remote = null; } }
-    const merged = remote ? mergeStates(baseState, localSnapshot, remote) : localSnapshot;
-    // text/plain avoids a CORS preflight that Apps Script web apps cannot answer.
-    const res = await fetch(webAppUrl(), {
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify(merged)
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    await idbSet(IDB_KEY(), JSON.stringify(state));
     dirtySinceSave = false;
-    baseState = cloneJson(merged);
-    const gotColleagueChanges = JSON.stringify(merged) !== JSON.stringify(localSnapshot);
-    state = merged;
-    try{
-      await idbSet(IDB_KEY(), JSON.stringify(state));
-      await idbSet(IDB_BASE_KEY(), JSON.stringify(state));
-    }catch(e){}
-    if (gotColleagueChanges){
-      const active = document.activeElement;
-      const isTyping = active && ['INPUT','TEXTAREA','SELECT'].includes(active.tagName);
-      if (!isTyping) renderAll();
-      pill.textContent = 'сохранено, объединено с изменениями коллеги · ' + new Date().toLocaleTimeString('ru-RU');
-    } else {
-      pill.textContent = 'сохранено в Google Таблице · ' + new Date().toLocaleTimeString('ru-RU');
-    }
+    pill.textContent = 'сохранено на этом устройстве · ' + new Date().toLocaleTimeString('ru-RU');
   }catch(e){
-    pill.textContent = 'нет сети — сохранено только локально, отправим при восстановлении связи · ' + new Date().toLocaleTimeString('ru-RU');
+    pill.textContent = 'не удалось сохранить: ' + e.message;
   }
 }
-// A hard, non-merging save — used only for the explicit "Новый акт" reset, which must really clear the
-// shared draft for everyone rather than being partially undone by a merge with whatever a colleague has open.
 async function hardSaveNow(){
-  const pill = document.getElementById('statusPill');
-  const snapshot = JSON.stringify(state);
-  baseState = JSON.parse(snapshot);
-  try{
-    await idbSet(IDB_KEY(), snapshot);
-    await idbSet(IDB_BASE_KEY(), snapshot);
-  }catch(e){}
-  if (!WEBAPP_URL){
-    showSetupBanner();
-    dirtySinceSave = false;
-    pill.textContent = 'сброшено локально (нет общего хранилища) · ' + new Date().toLocaleTimeString('ru-RU');
-    return;
-  }
-  try{
-    const res = await fetch(webAppUrl(), { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: snapshot });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    dirtySinceSave = false;
-    pill.textContent = 'сброшено для всех · ' + new Date().toLocaleTimeString('ru-RU');
-  }catch(e){
-    pill.textContent = 'нет сети — сброшено только локально · ' + new Date().toLocaleTimeString('ru-RU');
-  }
+  await doSaveNow();
 }
-// Flush aggressively whenever the page might disappear: tab close/reload, switching tabs/apps, minimizing
-// the browser, or the phone screen locking. visibilitychange fires far more reliably than beforeunload,
-// especially on mobile — this is the main defence against losing the last few keystrokes.
+// Flush aggressively whenever the page might disappear: tab close/reload, switching tabs/apps,
+// minimizing the browser, or the phone screen locking — this is the main defence against losing
+// the last few keystrokes if the debounce hasn't fired yet.
 function flushIfDirty(){
   if (dirtySinceSave){
     clearTimeout(saveTimer);
     doSaveNow();
   }
 }
-// Used specifically when the page is actually being torn down (beforeunload/pagehide). doSaveNow() does a
-// GET (fetch remote) -> merge -> POST round trip, which is too slow to finish before the browser kills the
-// page — that's why edits were getting lost when someone closed the tab right after typing. sendBeacon is
-// designed exactly for this: the browser guarantees it will try to deliver the request even after the page
-// is gone, so we skip the merge step here and just push the local snapshot directly. Any conflict with a
-// colleague's simultaneous edit gets resolved by the normal 3-way merge the next time either device loads.
-function beaconFlush(){
-  if (!dirtySinceSave) return;
-  clearTimeout(saveTimer);
-  const snapshot = JSON.stringify(state);
-  try{ idbSet(IDB_KEY(), snapshot); }catch(e){ /* best-effort, may not finish in time */ }
-  if (WEBAPP_URL && navigator.sendBeacon){
-    try{
-      const blob = new Blob([snapshot], { type: 'text/plain;charset=utf-8' });
-      navigator.sendBeacon(webAppUrl(), blob);
-    }catch(e){ /* ignore — local IndexedDB write above is still our fallback */ }
-  }
-}
 window.addEventListener('beforeunload', (e) => {
   if (dirtySinceSave){
-    beaconFlush();
+    flushIfDirty();
     e.preventDefault();
     e.returnValue = '';
   }
 });
 document.addEventListener('visibilitychange', () => {
-  // The page usually stays alive for a bit after going hidden (tab switch, app switch, screen lock), so
-  // there's time for the normal merge-based save here — this avoids needlessly overwriting a colleague's
-  // concurrent edit with the beacon's no-merge write.
   if (document.visibilityState === 'hidden') flushIfDirty();
 });
-window.addEventListener('pagehide', beaconFlush);
-window.addEventListener('focus', async () => { await refreshFromServerIfChanged(); });
-window.addEventListener('offline', () => { toast('Соединение потеряно — черновик продолжает сохраняться локально в этом браузере'); });
+window.addEventListener('pagehide', flushIfDirty);
 
-// Re-render only if the fetched draft actually differs from what's on screen, and restore the scroll
-// position afterwards. Without this, every periodic refresh (or window focus) rebuilds the whole checklist
-// from scratch and silently jumps the page back to the top — even when nothing had actually changed.
-async function refreshFromServerIfChanged(){
-  if (dirtySinceSave) return;
-  const active = document.activeElement;
-  if (active && ['INPUT','TEXTAREA','SELECT'].includes(active.tagName)) return; // don't yank focus while typing
-  const before = JSON.stringify(state);
-  const loaded = await loadDraft();
-  if (loaded && JSON.stringify(state) !== before){
-    renderAll();
-  }
-}
-
-let wasConnectedToSheet = true;
 async function loadDraft(){
-  let localCache = null, baseCache = null;
-  try{ const raw = await idbGet(IDB_KEY()); if (raw) localCache = migrateState(JSON.parse(raw)); }catch(e){}
-  try{ const raw = await idbGet(IDB_BASE_KEY()); if (raw) baseCache = migrateState(JSON.parse(raw)); }catch(e){}
-
-  if (WEBAPP_URL){
-    try{
-      const res = await fetch(webAppUrl(), { method:'GET' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const remote = migrateState(await res.json());
-      // If this browser has locally-cached edits that never made it to the server (tab closed/reloaded or
-      // connection dropped right after typing, before the debounce could save), merge them back in now
-      // instead of silently overwriting them with the older remote copy.
-      const finalState = localCache ? mergeStates(baseCache || remote, localCache, remote) : remote;
-      state = finalState;
-      baseState = cloneJson(state);
-      try{
-        await idbSet(IDB_KEY(), JSON.stringify(state));
-        await idbSet(IDB_BASE_KEY(), JSON.stringify(state));
-      }catch(e){}
-      if (localCache && JSON.stringify(finalState) !== JSON.stringify(remote)){
-        doSaveNow(); // recovered edits the server didn't have yet — push them now
-      }
-      if (!wasConnectedToSheet){
-        toast('Связь с Google Таблицей восстановлена');
-        wasConnectedToSheet = true;
-      }
+  try{
+    const raw = await idbGet(IDB_KEY());
+    if (raw){
+      state = migrateState(JSON.parse(raw));
       return true;
-    }catch(e){
-      // This fires on every failed poll (every few seconds while offline), so only surface it once per
-      // outage instead of flooding the user with a toast and the console with an error each attempt.
-      if (wasConnectedToSheet){
-        toast('Нет связи с Google Таблицей (' + e.message + ') — показан последний вариант, сохранённый в этом браузере');
-        console.error('loadDraft fetch error:', e);
-        wasConnectedToSheet = false;
-      }
     }
-  } else {
-    showSetupBanner();
-  }
-  if (localCache){
-    state = localCache;
-    baseState = baseCache ? cloneJson(baseCache) : cloneJson(localCache);
-    return true;
-  }
+  }catch(e){ /* no saved draft yet, or IndexedDB unavailable */ }
   return false;
 }
 
@@ -1939,29 +1637,24 @@ function renderPlanMeta(){
 
 /* ============================= FULL RENDER / RESET ============================= */
 function renderAll(){
-  // Rebuilding the DOM (below) resets scroll to the top in most browsers. renderAll can be triggered while
-  // someone is mid-scroll reading the checklist (periodic refresh, window focus, sync switch), so we save
-  // and restore the scroll position every time as a safety net.
-  const scrollY = window.scrollY;
   renderMeta();
   renderAllChecklistTools();
   renderSections();
   renderSignatories();
   renderConclusion();
   renderPlanMeta();
-  window.scrollTo(0, scrollY);
 }
 
 document.getElementById('addSectionBtn').addEventListener('click', addSection);
 document.getElementById('btnInsertSwapTable').addEventListener('click', insertSwapStatsTable);
 document.getElementById('btnInsertSwapQuickstart').addEventListener('click', insertSwapQuickStart);
 document.getElementById('btnNewAct').addEventListener('click', () => {
-  if (!confirm('Начать новый акт? Черновик общий для всех — он будет очищен у ВСЕХ, кто откроет эту страницу (фото и текст).')) return;
+  if (!confirm('Начать новый акт? Текущий черновик в этом браузере будет очищен (фото и текст).')) return;
   clearTimeout(saveTimer);
   state = defaultState();
   renderAll();
   hardSaveNow();
-  toast('Создан новый черновик акта (для всех пользователей)');
+  toast('Создан новый черновик акта');
 });
 
 /* ============================= OOXML (.docx) BUILDER ============================= */
@@ -2437,70 +2130,11 @@ async function generateXlsx(){
 document.getElementById('btnGenDocx').addEventListener('click', () => generateDocx().catch(e => { console.error(e); toast('Ошибка при создании акта: ' + e.message); }));
 document.getElementById('btnGenXlsx').addEventListener('click', () => generateXlsx().catch(e => { console.error(e); toast('Ошибка при создании плана: ' + e.message); }));
 
-/* ============================= SYNC CODE (pair a tablet + a phone on the same act) ============================= */
-function updateSyncButtonLabel(){
-  const btn = document.getElementById('btnSync');
-  btn.textContent = syncCode ? ('🔗 Код: ' + syncCode) : '🔗 Синхронизация';
-}
-function renderSyncStatus(){
-  const el2 = document.getElementById('syncCurrentStatus');
-  el2.textContent = syncCode
-    ? ('Сейчас подключено с кодом «' + syncCode + '». Введите этот же код на другом устройстве, чтобы соединить их.')
-    : 'Сейчас синхронизация не настроена — используется общий черновик по умолчанию.';
-}
-function openSyncModal(){
-  document.getElementById('syncCodeInput').value = syncCode || '';
-  renderSyncStatus();
-  document.getElementById('syncModalOverlay').style.display = 'flex';
-}
-function closeSyncModal(){
-  document.getElementById('syncModalOverlay').style.display = 'none';
-}
-async function switchSyncCode(newCode){
-  syncCode = (newCode || '').trim();
-  try{ if (syncCode) localStorage.setItem('sync_code', syncCode); else localStorage.removeItem('sync_code'); }catch(e){}
-  updateSyncButtonLabel();
-  toast(syncCode ? ('Подключено с кодом «' + syncCode + '»') : 'Синхронизация отключена (общий черновик по умолчанию)');
-  const had = await loadDraft();
-  renderAll();
-  if (!had){ state = defaultState(); renderAll(); }
-}
-document.getElementById('btnSync').addEventListener('click', openSyncModal);
-document.getElementById('syncCloseBtn').addEventListener('click', closeSyncModal);
-document.getElementById('syncConnectBtn').addEventListener('click', async () => {
-  const v = document.getElementById('syncCodeInput').value.trim();
-  if (!v){ toast('Введите код'); return; }
-  await switchSyncCode(v);
-  closeSyncModal();
-});
-document.getElementById('syncDisconnectBtn').addEventListener('click', async () => {
-  await switchSyncCode('');
-  closeSyncModal();
-});
-document.getElementById('syncModalOverlay').addEventListener('click', (e) => {
-  if (e.target.id === 'syncModalOverlay') closeSyncModal();
-});
-updateSyncButtonLabel();
-
-// Poll periodically so a paired device picks up the other one's changes without needing a manual refresh.
-// Skipped whenever there are unsaved local edits, so we never overwrite work in progress mid-typing.
-// Polls the shared draft periodically, backing off when the connection is down so a persistent outage
-// doesn't mean a network request (and a console error) every 8 seconds forever.
-let pollDelay = 8000;
-const POLL_DELAY_MIN = 8000, POLL_DELAY_MAX = 120000;
-async function pollLoop(){
-  const wasConnected = wasConnectedToSheet;
-  await refreshFromServerIfChanged();
-  pollDelay = wasConnectedToSheet ? POLL_DELAY_MIN : Math.min(POLL_DELAY_MAX, pollDelay * 2);
-  setTimeout(pollLoop, pollDelay);
-}
-setTimeout(pollLoop, pollDelay);
-
 /* ============================= INIT ============================= */
 (async function init(){
   const had = await loadDraft();
   renderAll();
-  if (had) toast('Загружен общий черновик');
+  if (had) toast('Загружен сохранённый черновик');
 })();
 </script>
 </body>
