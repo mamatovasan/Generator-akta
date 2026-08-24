@@ -1254,47 +1254,79 @@ function commitEntryToSection(sec, entry){
   });
   return { findings: problemIdx.length, ok: okIdx.length };
 }
+// Finds the section already dedicated to this object type (tagged via sec.objType when it was first
+// auto-created), or creates one. This is what makes repeated additions of the same object type — even
+// interleaved with other types — always land in the same section instead of spawning duplicates.
+function findOrCreateTypeSection(type, titleOverride){
+  let sec = state.sections.find(s => s.objType === type);
+  if (!sec){
+    const label = objTypeLabel(type);
+    sec = {
+      id: uid(), title: (titleOverride || '').trim() || label || 'Осмотр объектов',
+      description:'', table:null, findings:[], checkedOk:[], objType: type
+    };
+    state.sections.push(sec);
+  }
+  if (!sec.checkedOk) sec.checkedOk = [];
+  return sec;
+}
+function applyVisitSentenceToSection(sec, entries){
+  const visitSentence = buildVisitSentence(entries);
+  if (!visitSentence) return;
+  const introRe = /^Выборочно был осуществлён выезд для осмотра:\s*/;
+  if (!sec.description){
+    sec.description = visitSentence;
+  } else if (introRe.test(sec.description.trim())){
+    const existingBody = sec.description.trim().replace(introRe, '').replace(/\.\s*$/, '');
+    const newBody = visitSentence.replace(introRe, '').replace(/\.\s*$/, '');
+    sec.description = `Выборочно был осуществлён выезд для осмотра: ${existingBody}; ${newBody}.`;
+  } else {
+    sec.description = sec.description.trim() + ' ' + visitSentence;
+  }
+}
 function applyChecklistTool(ui){
   // Auto-include whatever object is currently in progress, so the last object doesn't need an extra click.
   if (ui.type) pushCurrentToBatch(ui, { silent:true });
   if (ui.batch.length === 0){ toast('Отметьте «Да»/«Нет» хотя бы для одного объекта'); return; }
 
-  let sec = null;
   const wantsNew = (ui.targetSectionId || '__new__') === '__new__';
-  if (!wantsNew) sec = state.sections.find(s => s.id === ui.targetSectionId) || null;
-  if (!sec){
-    sec = { id: uid(), title: (ui.newSectionName || '').trim() || (ui.batch[0] && ui.batch[0].typeLabel) || 'Осмотр объектов', description:'', table:null, findings:[], checkedOk:[] };
-    state.sections.push(sec);
-  }
-  if (!sec.checkedOk) sec.checkedOk = [];
+  const manualSec = wantsNew ? null : (state.sections.find(s => s.id === ui.targetSectionId) || null);
 
-  const visitSentence = buildVisitSentence(ui.batch);
-  if (visitSentence){
-    const introRe = /^Выборочно был осуществлён выезд для осмотра:\s*/;
-    if (!sec.description){
-      sec.description = visitSentence;
-    } else if (introRe.test(sec.description.trim())){
-      const existingBody = sec.description.trim().replace(introRe, '').replace(/\.\s*$/, '');
-      const newBody = visitSentence.replace(introRe, '').replace(/\.\s*$/, '');
-      sec.description = `Выборочно был осуществлён выезд для осмотра: ${existingBody}; ${newBody}.`;
-    } else {
-      sec.description = sec.description.trim() + ' ' + visitSentence;
-    }
-  }
+  // Group the queued objects by their destination section. A manual section pick applies to the whole
+  // batch (explicit override); otherwise each object is routed by its own type — e.g. every ЯКГ object
+  // always goes into the one "ЯКГ" section, every "Опоры" object into the one "Опоры" section, no matter
+  // what order the types were added in or what was added in between.
+  const typeGroups = new Map();
+  ui.batch.forEach(entry => {
+    const key = manualSec ? '__manual__' : entry.type;
+    if (!typeGroups.has(key)) typeGroups.set(key, []);
+    typeGroups.get(key).push(entry);
+  });
+  const singleGroup = typeGroups.size === 1;
 
   let totalFindings = 0, totalOk = 0;
   const objectsCount = ui.batch.length;
-  ui.batch.forEach(entry => {
-    const r = commitEntryToSection(sec, entry);
-    totalFindings += r.findings; totalOk += r.ok;
+  const touchedSections = [];
+  typeGroups.forEach((entries, key) => {
+    const sec = manualSec || findOrCreateTypeSection(key, singleGroup ? ui.newSectionName : '');
+    applyVisitSentenceToSection(sec, entries);
+    entries.forEach(entry => {
+      const r = commitEntryToSection(sec, entry);
+      totalFindings += r.findings; totalOk += r.ok;
+    });
+    if (!touchedSections.includes(sec)) touchedSections.push(sec);
   });
 
   ui.batch = [];
-  ui.type = ''; ui.objectRef = ''; ui.answers = {}; ui.photos = {};
-  ui.targetSectionId = sec.id; // keep pointing at this section so repeated batches land in the same place
+  ui.type = ''; ui.objectRef = ''; ui.answers = {}; ui.photos = {}; ui.newSectionName = '';
+  // Only stick to a specific section when the person explicitly picked one; in auto mode leave it on
+  // "__new__" so the next object (possibly a different type) routes itself correctly again.
+  ui.targetSectionId = manualSec ? manualSec.id : '__new__';
   renderAll();
   scheduleSave();
-  toast('Добавлено в раздел «' + (sec.title || '') + '»: объектов — ' + objectsCount + ', замечаний — ' + totalFindings + ', осмотрено — ' + totalOk);
+  const names = touchedSections.map(s => s.title || 'Без названия');
+  const where = names.length === 1 ? `раздел «${names[0]}»` : `разделы: ${names.map(n => '«' + n + '»').join(', ')}`;
+  toast('Добавлено в ' + where + ': объектов — ' + objectsCount + ', замечаний — ' + totalFindings + ', осмотрено — ' + totalOk);
 }
 function renderChecklistTool(containerId, ui, allowedTypes){
   const container = document.getElementById(containerId);
@@ -1306,7 +1338,7 @@ function renderChecklistTool(containerId, ui, allowedTypes){
     [['', '— выбрать тип объекта —'], ...allowedTypes.map(k => [k, CHECKLISTS[k].label])],
     v => {
       ui.type = v; ui.answers = {}; ui.photos = {}; ui.filter = '';
-      if (!ui.newSectionName && CHECKLISTS[v]) ui.newSectionName = CHECKLISTS[v].label;
+      ui.newSectionName = CHECKLISTS[v] ? CHECKLISTS[v].label : '';
       renderChecklistTool(containerId, ui, allowedTypes);
     })));
   const objPrefix = ui.type ? OBJ_PREFIX[ui.type] : '';
@@ -1318,13 +1350,17 @@ function renderChecklistTool(containerId, ui, allowedTypes){
   container.appendChild(row);
 
   const targetRow = el('div', {class:'grid', style:'margin-top:10px;'});
-  const sectionOptions = [['__new__', '+ Новый раздел'], ...state.sections.map(s => [s.id, s.title || 'Без названия'])];
+  const sectionOptions = [['__new__', '+ Авто по типу объекта'], ...state.sections.map(s => [s.id, s.title || 'Без названия'])];
   targetRow.appendChild(labeled('Куда добавить замечания', plainSelectPairs(ui.targetSectionId || '__new__', sectionOptions,
     v => { ui.targetSectionId = v; renderChecklistTool(containerId, ui, allowedTypes); })));
   if ((ui.targetSectionId || '__new__') === '__new__'){
-    targetRow.appendChild(labeled('Название нового раздела', plainTextInput(ui.newSectionName, v => { ui.newSectionName = v; }, 'Например «Осмотр ПСУ»')));
+    targetRow.appendChild(labeled('Название раздела (для нового типа)', plainTextInput(ui.newSectionName, v => { ui.newSectionName = v; }, 'Например «Осмотр ПСУ»')));
   }
   container.appendChild(targetRow);
+  if ((ui.targetSectionId || '__new__') === '__new__'){
+    container.appendChild(el('p', {class:'empty-hint', style:'margin-top:-4px;'},
+      'В авто-режиме все объекты одного типа (например все ЯКГ) всегда попадают в один и тот же раздел акта, даже если между ними добавлялись другие типы объектов.'));
+  }
 
   if (ui.batch.length > 0){
     const queueWrap = el('div', {style:'margin-top:12px; padding:10px 12px; background:#F6F4EF; border:1px solid var(--line); border-radius:8px;'});
