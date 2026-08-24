@@ -480,6 +480,15 @@ function formatDateHuman(iso){
   return `${d}.${m}.${y}`;
 }
 
+/* Подразделения ЦТО МС (для автоподсказки поля «Наименование») — родительный падеж, как того
+   требует формулировка заголовка акта («Акт проверки... <Тип> <Наименование в родит. падеже>»,
+   например «Темирского ЛТЦ»). Тип (ПТЦ/ПТУ) выбирается отдельно в поле «Тип подразделения». */
+const SUBDIVISION_NAME_SUGGESTIONS = [
+  'Актобе', 'Алгинского', 'Айтекебийского', 'Байганинского', 'Иргизского', 'Каргалинского',
+  'Кобдинского', 'Мартукского', 'Мугалжарского', 'Темирского', 'Уилского',
+  'Хромтауского', 'Шалкарского', 'Эмбенского'
+];
+
 /* ============================= META RENDER (built once, re-rendered on act-type change) ============================= */
 function renderMeta(){
   const wrap = document.getElementById('metaFields');
@@ -500,9 +509,13 @@ function renderMeta(){
 
   const g1 = el('div', {class:'grid3', style:'margin-top:14px;'});
   g1.appendChild(labeled('Тип подразделения', selectInput(state.meta.subdivisionType,
-    ['ЛТЦ','ЛТУ','ЦТО МС','Цех','Участок','ДЭСД','Другое'], v => state.meta.subdivisionType = v)));
-  g1.appendChild(labeled('Наименование (например «Мартукского района»)',
-    textInput(state.meta.subdivisionName, v => state.meta.subdivisionName = v, 'Мартукского района')));
+    ['ЛТЦ','ЛТУ','ЦТО МС','ЦЭиК','ЦТПСР','Цех','Участок','ДЭСД','Другое'], v => state.meta.subdivisionType = v)));
+  const subdivisionNameInput = textInput(state.meta.subdivisionName, v => state.meta.subdivisionName = v, 'Мартукского района');
+  subdivisionNameInput.setAttribute('list', 'subdivisionNameOptions');
+  const subdivisionNameDatalist = el('datalist', {id:'subdivisionNameOptions'});
+  SUBDIVISION_NAME_SUGGESTIONS.forEach(name => subdivisionNameDatalist.appendChild(el('option', {value:name})));
+  g1.appendChild(labeled('Наименование (например «Мартукского района»)', subdivisionNameInput));
+  g1.appendChild(subdivisionNameDatalist);
   g1.appendChild(labeled(state.meta.actType === 'swap' ? 'Проект / период строительства' : 'Период проверки',
     textInput(state.meta.period, v => state.meta.period = v, state.meta.actType === 'swap' ? 'FTTH (SWAP), 2024–2026' : '2025–2026')));
   wrap.appendChild(g1);
