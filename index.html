@@ -178,8 +178,10 @@
 
   <div class="card" id="pbChecklistCard">
     <h2>2 · Чек-лист: пожарная и производственная безопасность (ПБ)</h2>
-    <p class="sub">Отметьте галочками «Да»/«Нет» то, что соответствует или не соответствует норме — отмеченные
-    пункты сразу станут замечаниями (или отметкой «осмотрено») в выбранном (или новом) разделе акта.</p>
+    <p class="sub">Выберите подраздел (территория и здание ЛТЦ/ЛТУ, технологические помещения, санитарно-бытовые
+    помещения, котельные и резервуары, транспорт, оснащённость бригад), отметьте «Да»/«Нет» по каждому пункту —
+    отмеченные пункты сразу станут замечаниями (или отметкой «осмотрено»). Каждый подраздел всегда попадает в
+    свой отдельный раздел акта.</p>
     <div id="pbChecklistContainer"></div>
   </div>
 
@@ -792,8 +794,7 @@ const CHECKLISTS = {
     'Требуется чистка и протирка пыли внутри полок, корзин и кассет',
     'Требуется выкладка волокон на КДЗС'
   ]},
-  pb: { label:'Пожарная и производственная безопасность (по ПБ)', items:[
-    { header:'Территория и здание ЛТЦ/ЛТУ' },
+  pbTerritory: { label:'Территория и здание ЛТЦ/ЛТУ', items:[
     'Устранение замечаний предыдущих проверок',
     'Устранение замечаний аудита АО "Самрук-Казына"',
     'Наличие схем и знаков передвижение транспортных средств по территорий Общества',
@@ -822,8 +823,9 @@ const CHECKLISTS = {
     'На лестничных клетках, маршах и площадках, а также в коридорах, запрещается устройство кладовых помещений, установка шкафов, загромождение и захламление.',
     'Приямки у оконных проемов подвальных и цокольных этажей зданий, сооружений и строений своевременно очищаются. Запоры на окнах открываются изнутри без ключа.',
     'Устанавка решеток на окнах всех этажей здания и приямках у окон подвалов (кроме исключений Приказа МЧС №55)',
-    'Хранение и складирование в подвалах, цокольных этажах, чердаках, технических этажах, технических помещениях, вентиляционных камерах ЛВЖ и ГЖ, взрывчатые вещества, пиротехнические изделия, баллоны с горючими газами, товары в аэрозольной упаковке, целлулоиду, взрывопожароопасные, горючие вещества и материалы',
-    { header:'Требования к технологическим помещениям с установленным телекоммуникационным оборудованием' },
+    'Хранение и складирование в подвалах, цокольных этажах, чердаках, технических этажах, технических помещениях, вентиляционных камерах ЛВЖ и ГЖ, взрывчатые вещества, пиротехнические изделия, баллоны с горючими газами, товары в аэрозольной упаковке, целлулоиду, взрывопожароопасные, горючие вещества и материалы'
+  ]},
+  pbTech: { label:'Требования к технологическим помещениям с установленным телекоммуникационным оборудованием', items:[
     'Все прокладки кабеля через перекрытия, стены и перегородки осуществляются в отрезках несгораемых (трудносгораемых) труб с использованием материалов, не поддерживающих горение',
     'В местах пересечения противопожарных преград инженерными и технологическими коммуникациями (в том числе электрическими проводами и кабелями) образовавшиеся отверстия и зазоры уплотняются негорючими материалами, обеспечивающими требуемый предел огнестойкости и дымогазонепроницаемость.',
     'При входе в технологические помещения должны быть вывешены таблички с указанием категории помещений по опасности поражения электрическим током, взрыво- и пожаробезопасности и знаками безопасности, Ф.И.О. и должность ответственного за состояние охраны труда.',
@@ -865,8 +867,9 @@ const CHECKLISTS = {
     'В помещении дизельной горючее следует хранить в отдельном помещении, в закрытой исправной металлической таре',
     'В помещении дизельной наличие пролитые на пол или оборудование горючее, или смазочные вещества',
     'В помещении дизельной наличие специально оборудованных металлических ящиков для хранения ветоша и обтирочного материала',
-    'Все технологические помещения должны быть обеспечены огнетушителями, согласно требований НПА',
-    { header:'Требования к санитарно-бытовым помещениям' },
+    'Все технологические помещения должны быть обеспечены огнетушителями, согласно требований НПА'
+  ]},
+  pbSanitary: { label:'Требования к санитарно-бытовым помещениям', items:[
     'Наличие душевых помещений для производственного персонала',
     'Потолки в душевых покрывают водостойкими материалами',
     'В душевых должны быть резиновые либо пластиковые коврики, полки, крючки для банных принадлежностей',
@@ -883,8 +886,9 @@ const CHECKLISTS = {
     'Наличие комнаты приема пищи',
     'Наличие системы вентиляции в помещениях приема пищи',
     'Оснащение комнат приема пищ вешалками для санитарной одежды, умывальником, столами и стульями, холодильником, приборами для подогрева пищи и соответствующей мебелью согласно санитарным нормам',
-    'Площадь комнаты приема пищи и отдыха определяется из расчета 0,25 м2 для инвентарных и 1 м2 — для неинвентарных зданий на каждого посетителя, но не менее 12 м2',
-    { header:'Требования к котельным установкам и резервуарам' },
+    'Площадь комнаты приема пищи и отдыха определяется из расчета 0,25 м2 для инвентарных и 1 м2 — для неинвентарных зданий на каждого посетителя, но не менее 12 м2'
+  ]},
+  pbBoiler: { label:'Требования к котельным установкам и резервуарам', items:[
     'Наличие паспорта на котел, руководства по эксплуатации',
     'Наличие на котлах устройств, предохраняющих от повышения давления (предохранительными устройствами)',
     'Наличие на шкале манометра красной черты на делении величины рабочего давления соответствующей условиям эксплуатации ()',
@@ -911,8 +915,9 @@ const CHECKLISTS = {
     'Манометр',
     'Удовлетворительное техническое состояние резервуара для дизтоплива',
     'Информация о проведений освидетельствование (наличие документов подтверждающие )',
-    'Наличие договора на обслуживание',
-    { header:'Требования к транспортным подразделениям Общества' },
+    'Наличие договора на обслуживание'
+  ]},
+  pbTransport: { label:'Требования к транспортным подразделениям Общества', items:[
     'Отсутствует водительское удостоверения, срок действия водительского удостоверения истек',
     'Отсутствует свидетельство о государственной регистрации транспортного средства',
     'Отсутствует путевой лист',
@@ -1074,8 +1079,9 @@ const CHECKLISTS = {
     'Наличие утвержденного плана по замене аварийных опор линий связи',
     'Наличие утвержденного плана по уходу от опасных пересечений с линиями электропередач до и свыше 1000 В',
     'Наличие утвержденного плана по уходу от совместной подвески с линиями электропередач до и свыше 1000 В',
-    'Двери технологических помещений электроустановок, камер, щитов не оборудованы запирающими устройствами',
-    { header:'Оснащенность бригад и организация работ по производственной безопасности на рабочих местах' },
+    'Двери технологических помещений электроустановок, камер, щитов не оборудованы запирающими устройствами'
+  ]},
+  pbBrigade: { label:'Оснащенность бригад и организация работ по производственной безопасности на рабочих местах', items:[
     'Работники не обеспечены спецодеждой',
     'Работники при выполнений работ с повышенной опасностью не применяют средства индивидуальной защиты',
     'При выполнении работ с повышенной опасностью ответственное лицо не организовало необходимые мероприятия по безопасности и охране труда для работы членов бригады на объекте, где будут проводиться работы (допускающий не назначен или отсутствует на объекте)',
@@ -1152,8 +1158,11 @@ function makeChecklistUI(){
 }
 const pbChecklistUI = makeChecklistUI();
 const ouChecklistUI = makeChecklistUI();
-const PB_CHECKLIST_TYPES = ['pb'];
+const PB_CHECKLIST_TYPES = ['pbTerritory', 'pbTech', 'pbSanitary', 'pbBoiler', 'pbTransport', 'pbBrigade'];
 const OU_CHECKLIST_TYPES = ['opora', 'psu', 'gpon', 'krt', 'yakg', 'rsh', 'orsh'];
+// All the ПБ sub-checklists route into the act in this fixed order (matches the order the topics were
+// originally listed in), followed by the ОУ (linear-object) types in their own fixed order.
+const TYPED_SECTION_ORDER = [...PB_CHECKLIST_TYPES, ...OU_CHECKLIST_TYPES];
 function plainTextInput(value, onInput, placeholder){
   const i = el('input', {type:'text', class:'input', placeholder: placeholder || ''});
   i.value = value || '';
@@ -1175,10 +1184,10 @@ function plainSelectPairs(value, pairs, onInput){
 // - Линейные объекты (ОУ) items are phrased as defect statements ("Опора подлежит замене"), so 'Да'
 //   (confirming the defect is true) is the violation.
 function findingAnswerFor(type){
-  return type === 'pb' ? 'no' : 'yes';
+  return PB_CHECKLIST_TYPES.includes(type) ? 'no' : 'yes';
 }
 function okAnswerFor(type){
-  return type === 'pb' ? 'yes' : 'no';
+  return PB_CHECKLIST_TYPES.includes(type) ? 'yes' : 'no';
 }
 // Snapshot the currently in-progress object (type + answers + photos) into the queue, then reset the
 // working fields so the person can move on to the next object (possibly a different type).
@@ -1244,18 +1253,20 @@ function findOrCreateTypeSection(type, titleOverride){
   if (!sec.checkedOk) sec.checkedOk = [];
   return sec;
 }
-// Objects can be added in any order while filling out the act (ОРК, then Опора, then ОРК again, etc.),
-// but the finished act must list the ОУ sections in one fixed ascending order regardless of that entry
-// order — the same order as the section-3 checklist list (Опоры, ПСУ, ОРК, КРТ, ЯКГ, РШ, ОРШ). This
-// reorders just those objType-tagged sections into that order, in place, without disturbing the position
-// of any other section (ПБ, manually-added sections, etc.).
-function reorderOuSections(){
-  const ouIndices = [];
-  state.sections.forEach((s, i) => { if (OU_CHECKLIST_TYPES.includes(s.objType)) ouIndices.push(i); });
-  if (ouIndices.length < 2) return;
-  const ouSections = ouIndices.map(i => state.sections[i]);
-  ouSections.sort((a, b) => OU_CHECKLIST_TYPES.indexOf(a.objType) - OU_CHECKLIST_TYPES.indexOf(b.objType));
-  ouIndices.forEach((idx, k) => { state.sections[idx] = ouSections[k]; });
+// Objects/items can be added in any order while filling out the act (a ПБ sub-topic, then an ОУ object,
+// then another ПБ sub-topic, etc.), but the finished act must list every auto-routed section in one fixed
+// ascending order regardless of that entry order: all ПБ sub-checklists first (Территория/здание, Технологические
+// помещения, Санитарно-бытовые, Котельные, Транспорт, Оснащённость бригад — in that order), then the ОУ
+// (linear-object) types (Опоры, ПСУ, ОРК, КРТ, ЯКГ, РШ, ОРШ). This reorders just those objType-tagged
+// sections into TYPED_SECTION_ORDER, in place, without disturbing the position of any other (manually
+// added) section.
+function reorderTypedSections(){
+  const idxs = [];
+  state.sections.forEach((s, i) => { if (TYPED_SECTION_ORDER.includes(s.objType)) idxs.push(i); });
+  if (idxs.length < 2) return;
+  const secs = idxs.map(i => state.sections[i]);
+  secs.sort((a, b) => TYPED_SECTION_ORDER.indexOf(a.objType) - TYPED_SECTION_ORDER.indexOf(b.objType));
+  idxs.forEach((idx, k) => { state.sections[idx] = secs[k]; });
 }
 // Finding numbers ("2.1", "3.4" ...) are baked in as plain text, so whenever section order changes they
 // need to be re-stamped to match the sections' current positions — otherwise numbering from before a
@@ -1317,7 +1328,7 @@ function applyChecklistTool(ui){
   // Only stick to a specific section when the person explicitly picked one; in auto mode leave it on
   // "__new__" so the next object (possibly a different type) routes itself correctly again.
   ui.targetSectionId = manualSec ? manualSec.id : '__new__';
-  reorderOuSections();
+  reorderTypedSections();
   renumberAllFindings();
   renderAll();
   scheduleSave();
@@ -1332,7 +1343,7 @@ function renderChecklistTool(containerId, ui, allowedTypes){
 
   const row = el('div', {class:'grid'});
   row.appendChild(labeled('Тип чек-листа', plainSelectPairs(ui.type,
-    [['', '— выбрать тип объекта —'], ...allowedTypes.map(k => [k, CHECKLISTS[k].label])],
+    [['', '— выбрать раздел —'], ...allowedTypes.map(k => [k, CHECKLISTS[k].label])],
     v => {
       ui.type = v; ui.answers = {}; ui.photos = {}; ui.filter = '';
       ui.newSectionName = CHECKLISTS[v] ? CHECKLISTS[v].label : '';
@@ -2369,7 +2380,7 @@ document.getElementById('btnGenXlsx').addEventListener('click', () => generateXl
 /* ============================= INIT ============================= */
 (async function init(){
   const had = await loadDraft();
-  reorderOuSections();
+  reorderTypedSections();
   renumberAllFindings();
   renderAll();
   if (had) toast('Загружен сохранённый черновик');
