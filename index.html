@@ -191,7 +191,7 @@
   </div>
 
   <div class="card" id="sectionsCard">
-    <h2>4 · Замечания по объектам (ПСУ, РШ, ОРШ и т.д.)</h2>
+    <h2>4 · Выполнение (ППР, ТР), утверждённого планом</h2>
     <p class="sub">Каждый раздел — это блок проверки (например «Осмотр ПСУ», «Охрана труда», «Санитарно-бытовые условия»).
     Внутри раздела добавляйте замечания вручную — они попадут и в акт, и в план устранения. Фото, прикреплённые
     к замечанию, в текст акта не попадают — они уходят в отдельный файл «Фотоприложение» с подписью-замечанием
@@ -240,6 +240,14 @@
     </div>
   </div>
 
+  <div class="card" id="pprCard">
+    <h2>8 · График ППР (план/факт осмотра и ТО)</h2>
+    <p class="sub">Строки заполнены по списку объектов из раздела 3 (Опоры, ПСУ, ОРК, КРТ, ЯКГ, РШ, ОРШ) —
+    впишите даты/отметки план и факт осмотра и ТО. Можно добавлять и удалять строки и столбцы. Таблица
+    попадёт в акт отдельным разделом.</p>
+    <div id="pprTableContainer"></div>
+  </div>
+
   <footer class="note">
     Черновик (текст и фотографии) сохраняется прямо в этом браузере — работает полностью без интернета и не
     пропадает после закрытия вкладки, перезагрузки страницы или отключения сети. Хранится только на этом
@@ -278,6 +286,22 @@ function recommendationTemplate(actType){
   }
   return '';
 }
+// Default График ППР table — one row per linear-object type from the section-3 checklist list
+// (Опоры, ПСУ, ОРК, КРТ, ЯКГ, РШ, ОРШ), columns for planned/actual inspection and planned/actual TO.
+function defaultPprTable(){
+  return {
+    headers:['Объект','План осмотра','Факт осмотра','План ТО','Факт ТО'],
+    rows:[
+      ['Опоры','','','',''],
+      ['ПСУ','','','',''],
+      ['ОРК','','','',''],
+      ['КРТ','','','',''],
+      ['ЯКГ','','','',''],
+      ['РШ','','','',''],
+      ['ОРШ','','','','']
+    ]
+  };
+}
 function defaultState(){
   return {
     meta:{
@@ -303,7 +327,8 @@ function defaultState(){
     plan:{
       agreedPosition:'Начальник', agreedName:'',
       approvedPosition:'Директор ДЭСД', approvedName:''
-    }
+    },
+    ppr: defaultPprTable()
   };
 }
 
@@ -317,6 +342,7 @@ function migrateState(s){
   if (!s.deadlineNote) s.deadlineNote = d.deadlineNote;
   if (!s.signatories) s.signatories = d.signatories;
   if (!s.plan) s.plan = d.plan;
+  if (!s.ppr || !s.ppr.headers || !s.ppr.headers.length) s.ppr = d.ppr;
   if (!s.sections) s.sections = [];
   s.sections.forEach(sec => {
     sec.findings.forEach(f => { f.photos = f.photos || []; });
@@ -1102,6 +1128,49 @@ const CHECKLISTS = {
     'В помещений испытательной установки отсутствует диэлектрические коврики'
   ]}
 };
+// Short prefixes used to auto-label the object number the person types into the checklist tool
+// (e.g. typing just "14" for an "опора" object becomes "Опора №14" in the act).
+const OBJ_PREFIX = {
+  krt: 'КРТ', yakg: 'ЯКГ', gpon: 'ОРК', opora: 'Опора', rsh: 'РШ', psu: 'ПСУ', orsh: 'ОРШ'
+};
+function objTypeLabel(type){
+  return OBJ_PREFIX[type] || (CHECKLISTS[type] && CHECKLISTS[type].label) || '';
+}
+// Turns whatever the person typed into the "Номер объекта" field into a properly labelled reference.
+// If they already typed the type name or a "№" themselves, their text is respected as-is.
+function formatObjectRef(type, raw){
+  raw = (raw || '').trim();
+  if (!raw) return '';
+  const prefix = OBJ_PREFIX[type];
+  if (!prefix) return raw;
+  if (raw.toUpperCase().indexOf(prefix.toUpperCase()) !== -1) return raw;
+  if (raw.indexOf('№') !== -1) return prefix + ' ' + raw;
+  return prefix + ' №' + raw;
+}
+// Builds an intro sentence summarising which objects were visited/inspected, grouped by type, e.g.
+// "Выборочно был осуществлён выезд для осмотра: ЯКГ №1, №2, №3; Опора №5." — used to auto-fill the
+// section description so the person doesn't have to type this sentence by hand.
+function buildVisitSentence(entries){
+  const order = [];
+  const groups = {};
+  (entries || []).forEach(entry => {
+    const raw = (entry.objectRef || '').trim();
+    if (!raw) return;
+    if (!groups[entry.type]){ groups[entry.type] = []; order.push(entry.type); }
+    groups[entry.type].push(raw);
+  });
+  if (!order.length) return '';
+  const parts = order.map(type => {
+    const label = objTypeLabel(type);
+    const nums = groups[type].map(raw => {
+      if (raw.indexOf('№') !== -1) return raw;
+      if (!/\s/.test(raw) && raw.length <= 15) return '№' + raw;
+      return raw;
+    });
+    return `${label} ${nums.join(', ')}`.trim();
+  });
+  return `Выборочно был осуществлён выезд для осмотра: ${parts.join('; ')}.`;
+}
 // Transient UI-only state for the checklist tool (not part of saved/shared act data — it's just a quick-entry helper).
 // It's global now (one tool, own top-level card) rather than duplicated inside every section.
 function makeChecklistUI(){
@@ -1166,14 +1235,15 @@ function commitEntryToSection(sec, entry){
     sec.findings.push({
       id: uid(),
       number: (secIdx+1) + '.' + (sec.findings.length+1),
-      object: entry.objectRef || '',
+      object: formatObjectRef(entry.type, entry.objectRef),
       description: def.items[Number(k)],
       responsible:'', deadline:'',
       photos: (entry.photos[k] || []).slice()
     });
   });
   okIdx.forEach(k => {
-    const text = (entry.objectRef ? entry.objectRef + ' — ' : '') + def.items[Number(k)];
+    const objRef = formatObjectRef(entry.type, entry.objectRef);
+    const text = (objRef ? objRef + ' — ' : '') + def.items[Number(k)];
     const photosToAdd = entry.photos[k] || [];
     const existing = sec.checkedOk.find(x => x.text === text);
     if (existing){
@@ -1197,6 +1267,20 @@ function applyChecklistTool(ui){
     state.sections.push(sec);
   }
   if (!sec.checkedOk) sec.checkedOk = [];
+
+  const visitSentence = buildVisitSentence(ui.batch);
+  if (visitSentence){
+    const introRe = /^Выборочно был осуществлён выезд для осмотра:\s*/;
+    if (!sec.description){
+      sec.description = visitSentence;
+    } else if (introRe.test(sec.description.trim())){
+      const existingBody = sec.description.trim().replace(introRe, '').replace(/\.\s*$/, '');
+      const newBody = visitSentence.replace(introRe, '').replace(/\.\s*$/, '');
+      sec.description = `Выборочно был осуществлён выезд для осмотра: ${existingBody}; ${newBody}.`;
+    } else {
+      sec.description = sec.description.trim() + ' ' + visitSentence;
+    }
+  }
 
   let totalFindings = 0, totalOk = 0;
   const objectsCount = ui.batch.length;
@@ -1225,8 +1309,12 @@ function renderChecklistTool(containerId, ui, allowedTypes){
       if (!ui.newSectionName && CHECKLISTS[v]) ui.newSectionName = CHECKLISTS[v].label;
       renderChecklistTool(containerId, ui, allowedTypes);
     })));
+  const objPrefix = ui.type ? OBJ_PREFIX[ui.type] : '';
+  const objPlaceholder = objPrefix
+    ? `Введите только номер, например «14» — в акте станет «${objPrefix} №14»`
+    : 'например «14» или «РШ №3, ул. Абая 12»';
   row.appendChild(labeled('Номер объекта / адрес (общий для всех отмеченных пунктов)',
-    plainTextInput(ui.objectRef, v => { ui.objectRef = v; }, 'например «ПСУ №14» или «РШ №3, ул. Абая 12»')));
+    plainTextInput(ui.objectRef, v => { ui.objectRef = v; }, objPlaceholder)));
   container.appendChild(row);
 
   const targetRow = el('div', {class:'grid', style:'margin-top:10px;'});
@@ -1253,7 +1341,8 @@ function renderChecklistTool(containerId, ui, allowedTypes){
       const problemCount = Object.values(entry.answers).filter(v => v === findingAns).length;
       const okCount = Object.values(entry.answers).filter(v => v === okAns).length;
       const row2 = el('div', {style:'display:flex; justify-content:space-between; align-items:center; font-size:12px; padding:4px 0; border-top:1px solid #E7E2D6;'});
-      row2.appendChild(el('span', {}, `${entry.typeLabel}${entry.objectRef ? ' — ' + entry.objectRef : ''} · замечаний: ${problemCount}, осмотрено: ${okCount}`));
+      const refLabel = formatObjectRef(entry.type, entry.objectRef);
+      row2.appendChild(el('span', {}, `${entry.typeLabel}${refLabel ? ' — ' + refLabel : ''} · замечаний: ${problemCount}, осмотрено: ${okCount}`));
       row2.appendChild(el('button', {class:'icon-btn', title:'Убрать объект из очереди', onClick: () => {
         ui.batch.splice(bi, 1);
         renderChecklistTool(containerId, ui, allowedTypes);
@@ -1657,6 +1746,59 @@ function renderPlanMeta(){
   });
 }
 
+function renderPprTable(){
+  const container = document.getElementById('pprTableContainer');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!state.ppr) state.ppr = defaultPprTable();
+  const wrap = el('div', {class:'table-editor'});
+  const table = el('table');
+
+  const thead = el('tr');
+  state.ppr.headers.forEach((h, ci) => {
+    const th = el('th');
+    const inp = el('input', {value:h});
+    inp.addEventListener('input', e => { state.ppr.headers[ci] = e.target.value; scheduleSave(); });
+    th.appendChild(inp);
+    thead.appendChild(th);
+  });
+  const thRm = el('th', {style:'width:1%;'});
+  thRm.appendChild(el('button', {class:'icon-btn btn-sm', title:'Добавить столбец', onClick: () => {
+    state.ppr.headers.push('Столбец');
+    state.ppr.rows.forEach(r => r.push(''));
+    renderPprTable();
+    scheduleSave();
+  }}, '+col'));
+  thead.appendChild(thRm);
+  table.appendChild(thead);
+
+  state.ppr.rows.forEach((row, ri) => {
+    const tr = el('tr');
+    row.forEach((cellVal, ci) => {
+      const td = el('td');
+      const inp = el('input', {value: cellVal});
+      inp.addEventListener('input', e => { state.ppr.rows[ri][ci] = e.target.value; scheduleSave(); });
+      td.appendChild(inp);
+      tr.appendChild(td);
+    });
+    const tdRm = el('td');
+    tdRm.appendChild(el('button', {class:'icon-btn btn-sm', title:'Удалить строку', onClick: () => {
+      state.ppr.rows.splice(ri,1);
+      renderPprTable();
+      scheduleSave();
+    }}, '✕'));
+    tr.appendChild(tdRm);
+    table.appendChild(tr);
+  });
+  wrap.appendChild(table);
+  wrap.appendChild(el('button', {class:'dashed-add', style:'margin-top:8px;', onClick: () => {
+    state.ppr.rows.push(state.ppr.headers.map(()=>''));
+    renderPprTable();
+    scheduleSave();
+  }}, '+ Добавить строку'));
+  container.appendChild(wrap);
+}
+
 /* ============================= FULL RENDER / RESET ============================= */
 function renderAll(){
   renderMeta();
@@ -1665,6 +1807,7 @@ function renderAll(){
   renderSignatories();
   renderConclusion();
   renderPlanMeta();
+  renderPprTable();
 }
 
 document.getElementById('addSectionBtn').addEventListener('click', addSection);
@@ -1923,6 +2066,14 @@ async function generateDocx(){
       });
     }
   });
+
+  if (state.ppr && state.ppr.headers && state.ppr.headers.length){
+    const hasData = state.ppr.rows.some(row => row.some((v, ci) => ci > 0 && (v || '').trim()));
+    if (hasData){
+      parts.push(heading(`${state.sections.length+1}. График ППР (план/факт осмотра и ТО)`, 3, 'left'));
+      parts.push(tableXml(state.ppr.headers, state.ppr.rows));
+    }
+  }
 
   parts.push(heading('Вывод:', 3, 'left'));
   parts.push(paragraph(state.conclusion || '—', { align:'both' }));
