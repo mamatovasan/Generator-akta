@@ -1318,7 +1318,7 @@ function buildVisitSentence(entries){
 // Transient UI-only state for the checklist tool (not part of saved/shared act data — it's just a quick-entry helper).
 // It's global now (one tool, own top-level card) rather than duplicated inside every section.
 function makeChecklistUI(){
-  return { type:'', objectRef:'', answers:{}, photos:{}, filter:'', targetSectionId:'__new__', newSectionName:'', batch:[] };
+  return { type:'', objectRef:'', answers:{}, photos:{}, customItems:[], filter:'', targetSectionId:'__new__', newSectionName:'', batch:[] };
 }
 const pbChecklistUI = makeChecklistUI();
 const ouChecklistUI = makeChecklistUI();
@@ -1360,13 +1360,15 @@ function pushCurrentToBatch(ui, opts){
   const def = CHECKLISTS[ui.type];
   if (!def){ if (!opts.silent) toast('Сначала выберите тип объекта'); return false; }
   const hasAnswers = Object.values(ui.answers).some(v => v === 'yes' || v === 'no');
-  if (!hasAnswers){ if (!opts.silent) toast('Отметьте хотя бы один пункт «Да» или «Нет» для этого объекта'); return false; }
+  const hasCustom = (ui.customItems || []).some(c => (c.text || '').trim());
+  if (!hasAnswers && !hasCustom){ if (!opts.silent) toast('Отметьте хотя бы один пункт «Да»/«Нет» или добавьте своё замечание для этого объекта'); return false; }
   ui.batch.push({
     id: uid(), type: ui.type, typeLabel: def.label, objectRef: ui.objectRef,
     answers: Object.assign({}, ui.answers),
-    photos: JSON.parse(JSON.stringify(ui.photos))
+    photos: JSON.parse(JSON.stringify(ui.photos)),
+    customItems: JSON.parse(JSON.stringify((ui.customItems || []).filter(c => (c.text || '').trim())))
   });
-  ui.type = ''; ui.objectRef = ''; ui.answers = {}; ui.photos = {};
+  ui.type = ''; ui.objectRef = ''; ui.answers = {}; ui.photos = {}; ui.customItems = [];
   return true;
 }
 // Write one queued object's answers into the target section (finding vs. checked-OK depends on type, see above).
@@ -1399,7 +1401,23 @@ function commitEntryToSection(sec, entry){
       sec.checkedOk.push({ id: uid(), text, photos: photosToAdd.slice() });
     }
   });
-  return { findings: problemIdx.length, ok: okIdx.length };
+  // Free-form remarks typed by hand (not from the fixed checklist, e.g. "течёт крыша") always count
+  // as findings — they land in the act, photo appendix and remediation plan exactly like any other one.
+  let customCount = 0;
+  (entry.customItems || []).forEach(ci => {
+    const text = (ci.text || '').trim();
+    if (!text) return;
+    sec.findings.push({
+      id: uid(),
+      number: (secIdx+1) + '.' + (sec.findings.length+1),
+      object: formatObjectRef(entry.type, entry.objectRef),
+      description: text,
+      responsible:'', deadline:'',
+      photos: (ci.photos || []).slice()
+    });
+    customCount++;
+  });
+  return { findings: problemIdx.length + customCount, ok: okIdx.length };
 }
 // Finds the section already dedicated to this object type (tagged via sec.objType when it was first
 // auto-created), or creates one. This is what makes repeated additions of the same object type — even
@@ -1488,7 +1506,7 @@ function applyChecklistTool(ui){
   });
 
   ui.batch = [];
-  ui.type = ''; ui.objectRef = ''; ui.answers = {}; ui.photos = {}; ui.newSectionName = '';
+  ui.type = ''; ui.objectRef = ''; ui.answers = {}; ui.photos = {}; ui.customItems = []; ui.newSectionName = '';
   // Only stick to a specific section when the person explicitly picked one; in auto mode leave it on
   // "__new__" so the next object (possibly a different type) routes itself correctly again.
   ui.targetSectionId = manualSec ? manualSec.id : '__new__';
@@ -1509,7 +1527,7 @@ function renderChecklistTool(containerId, ui, allowedTypes){
   row.appendChild(labeled('Тип чек-листа', plainSelectPairs(ui.type,
     [['', '— выбрать раздел —'], ...allowedTypes.map(k => [k, CHECKLISTS[k].label])],
     v => {
-      ui.type = v; ui.answers = {}; ui.photos = {}; ui.filter = '';
+      ui.type = v; ui.answers = {}; ui.photos = {}; ui.customItems = []; ui.filter = '';
       ui.newSectionName = CHECKLISTS[v] ? CHECKLISTS[v].label : '';
       renderChecklistTool(containerId, ui, allowedTypes);
     })));
@@ -1548,9 +1566,11 @@ function renderChecklistTool(containerId, ui, allowedTypes){
       const okAns = okAnswerFor(entry.type);
       const problemCount = Object.values(entry.answers).filter(v => v === findingAns).length;
       const okCount = Object.values(entry.answers).filter(v => v === okAns).length;
+      const customCount = (entry.customItems || []).filter(c => (c.text || '').trim()).length;
       const row2 = el('div', {style:'display:flex; justify-content:space-between; align-items:center; font-size:12px; padding:4px 0; border-top:1px solid #E7E2D6;'});
       const refLabel = formatObjectRef(entry.type, entry.objectRef);
-      row2.appendChild(el('span', {}, `${entry.typeLabel}${refLabel ? ' — ' + refLabel : ''} · замечаний: ${problemCount}, осмотрено: ${okCount}`));
+      const findingsLabel = customCount ? `${problemCount} + ${customCount} своих` : String(problemCount);
+      row2.appendChild(el('span', {}, `${entry.typeLabel}${refLabel ? ' — ' + refLabel : ''} · замечаний: ${findingsLabel}, осмотрено: ${okCount}`));
       row2.appendChild(el('button', {class:'icon-btn', title:'Убрать объект из очереди', onClick: () => {
         ui.batch.splice(bi, 1);
         renderChecklistTool(containerId, ui, allowedTypes);
@@ -1679,13 +1699,74 @@ function renderChecklistTool(containerId, ui, allowedTypes){
     }
     container.appendChild(list);
 
+    // --- custom (free-form) remarks — for anything not covered by the fixed checklist above,
+    // e.g. "Протекает крыша над техническим помещением". Each gets its own text and photos, and
+    // always becomes a finding (like a checklist item answered the "violation" way) once committed. ---
+    if (!ui.customItems) ui.customItems = [];
+    const customWrap = el('div', {style:'margin-top:16px; padding-top:12px; border-top:1px dashed #B9C2CA;'});
+    customWrap.appendChild(el('strong', {style:'font-size:12.5px; color:var(--navy); display:block; margin-bottom:2px;'},
+      'Свои замечания (если нужного пункта нет в списке выше)'));
+    customWrap.appendChild(el('p', {class:'empty-hint', style:'margin:0 0 8px;'},
+      'Например: «Протекает крыша над техническим помещением». Можно прикрепить фото — замечание попадёт в акт, фотоприложение и план устранения вместе с остальными.'));
+    ui.customItems.forEach((ci, ciIdx) => {
+      const ciWrap = el('div', {class:'finding', style:'margin-bottom:10px;'});
+      const ciHead = el('div', {style:'display:flex; gap:8px; align-items:flex-start;'});
+      const ciText = el('textarea', {class:'input textarea', rows:2, placeholder:'Текст своего замечания, например «Протекает крыша над техническим помещением»'});
+      ciText.value = ci.text || '';
+      ciText.style.flex = '1';
+      ciText.addEventListener('input', e => { ci.text = e.target.value; scheduleSave(); });
+      ciHead.appendChild(ciText);
+      ciHead.appendChild(el('button', {class:'icon-btn', title:'Удалить своё замечание', onClick: () => {
+        ui.customItems.splice(ciIdx, 1);
+        renderChecklistTool(containerId, ui, allowedTypes);
+      }}, '✕'));
+      ciWrap.appendChild(ciHead);
+
+      const ciPhotoWrap = el('div', {style:'margin-top:8px;'});
+      const ciFileId = containerId + '_custom_photo_' + ci.id;
+      const ciFileLabel = el('label', {class:'btn-outline btn-sm', for:ciFileId, style:'cursor:pointer; display:inline-block; font-weight:600;'}, '📷 Добавить фото');
+      const ciFileInput = el('input', {type:'file', id:ciFileId, accept:'image/*', multiple:'multiple', style:'display:none;'});
+      const ciThumbs = el('div', {class:'thumbs', style:'margin-top:6px;'});
+      if (!ci.photos) ci.photos = [];
+      function refreshCiThumbs(){
+        ciThumbs.innerHTML = '';
+        ci.photos.forEach(p => {
+          const t = el('div', {class:'thumb'});
+          t.appendChild(el('img', {src:p.dataUrl, alt:p.name}));
+          t.appendChild(el('button', {class:'rm', title:'Удалить фото', onClick: () => {
+            ci.photos = ci.photos.filter(x => x.id !== p.id);
+            refreshCiThumbs();
+            scheduleSave();
+          }}, '✕'));
+          ciThumbs.appendChild(t);
+        });
+      }
+      ciFileInput.addEventListener('change', e => {
+        const fakeFinding = { photos: ci.photos };
+        handleFiles(fakeFinding, e.target.files, () => { refreshCiThumbs(); scheduleSave(); });
+        e.target.value = '';
+      });
+      refreshCiThumbs();
+      ciPhotoWrap.appendChild(ciFileLabel);
+      ciPhotoWrap.appendChild(ciFileInput);
+      ciPhotoWrap.appendChild(ciThumbs);
+      ciWrap.appendChild(ciPhotoWrap);
+
+      customWrap.appendChild(ciWrap);
+    });
+    customWrap.appendChild(el('button', {class:'dashed-add', type:'button', onClick: () => {
+      ui.customItems.push({ id: uid(), text:'', photos:[] });
+      renderChecklistTool(containerId, ui, allowedTypes);
+    }}, '+ Добавить своё замечание (не из списка)'));
+    container.appendChild(customWrap);
+
     const actions = el('div', {style:'display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px;'});
     actions.appendChild(el('button', {class:'btn-outline btn-sm', onClick: () => {
       const ok = pushCurrentToBatch(ui);
       if (ok){ renderChecklistTool(containerId, ui, allowedTypes); toast('Объект добавлен в очередь — выберите следующий'); }
     }}, '+ Добавить следующий объект'));
     actions.appendChild(el('button', {class:'btn-amber btn-sm', onClick: () => applyChecklistTool(ui)}, 'Добавить в акт'));
-    actions.appendChild(el('button', {class:'btn-outline btn-sm', onClick: () => { ui.answers = {}; ui.photos = {}; renderChecklistTool(containerId, ui, allowedTypes); }}, 'Сбросить ответы по объекту'));
+    actions.appendChild(el('button', {class:'btn-outline btn-sm', onClick: () => { ui.answers = {}; ui.photos = {}; ui.customItems = []; renderChecklistTool(containerId, ui, allowedTypes); }}, 'Сбросить ответы по объекту'));
     counterEl = el('span', {style:'font-size:12px; color:var(--ink-soft);'});
     updateCounter();
     actions.appendChild(counterEl);
