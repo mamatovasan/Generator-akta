@@ -4,8 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Генератор актов проверки и планов устранения замечаний</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 <style>
   :root{
     --navy:#132A3E;
@@ -132,6 +130,7 @@
   .status-pill{
     font-size:11px; color:#C9D6E0; font-family:var(--mono); align-self:center;
   }
+  .status-pill.warn{ color:#FFD27A; font-weight:600; }
   .empty-hint{color:var(--ink-soft); font-size:12.5px; font-style:italic; padding:6px 0;}
   .icon-btn{background:transparent; border:none; color:var(--ink-soft); font-size:16px; padding:2px 6px;}
   .icon-btn:hover{color:var(--danger);}
@@ -159,6 +158,10 @@
     <button class="btn-outline" id="btnGenDocx">📄 Акт (Word, без фото)</button>
     <button class="btn-outline" id="btnGenPhotoAppendix">🖼️ Фотоприложение (Word)</button>
     <button class="btn-amber" id="btnGenXlsx">Скачать План (Excel)</button>
+    <button class="btn-outline btn-sm" id="btnDownloadAllPhotos" title="Скачать все фотографии акта одним файлом на телефон">📸 Все фото (ZIP)</button>
+    <button class="btn-ghost btn-sm" id="btnExportBackup" title="Сохранить резервную копию всего акта (текст + фото) отдельным файлом на телефон">💾 Резервная копия</button>
+    <button class="btn-ghost btn-sm" id="btnImportBackup" title="Восстановить акт из ранее сохранённой резервной копии">📥 Восстановить копию</button>
+    <input type="file" id="backupFileInput" accept="application/json,.json" style="display:none;">
   </div>
 </div>
 
@@ -256,6 +259,124 @@
 <div class="toast" id="toast"></div>
 
 <script>
+/* ============================= MINI ZIP BUILDER — a tiny, dependency-free replacement for JSZip/FileSaver
+   (previously loaded from a CDN, which meant the app stopped working the moment there was no internet
+   connection). This writes plain, uncompressed ("store" method) PKZIP archives — the same container format
+   .docx and .xlsx files use — entirely locally, with zero network requests. ============================= */
+const ZIP_CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++){
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+function zipCrc32(bytes){
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) crc = ZIP_CRC_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function zipDosDateTime(date){
+  const dosTime = ((date.getHours() & 0x1F) << 11) | ((date.getMinutes() & 0x3F) << 5) | (Math.floor(date.getSeconds()/2) & 0x1F);
+  const dosDate = (((date.getFullYear()-1980) & 0x7F) << 9) | (((date.getMonth()+1) & 0xF) << 5) | (date.getDate() & 0x1F);
+  return { dosTime, dosDate };
+}
+function buildZipBytes(entries){
+  const encoder = new TextEncoder();
+  const { dosTime, dosDate } = zipDosDateTime(new Date());
+  const prepared = entries.map(e => {
+    const nameBytes = encoder.encode(e.path);
+    const data = e.data;
+    return { nameBytes, data, crc: zipCrc32(data), size: data.length };
+  });
+  let localSize = 0; prepared.forEach(p => { localSize += 30 + p.nameBytes.length + p.size; });
+  let centralSize = 0; prepared.forEach(p => { centralSize += 46 + p.nameBytes.length; });
+  const buf = new Uint8Array(localSize + centralSize + 22);
+  const view = new DataView(buf.buffer);
+  let offset = 0;
+  const centralMeta = [];
+  prepared.forEach(p => {
+    const localOffset = offset;
+    view.setUint32(offset, 0x04034b50, true); offset += 4;
+    view.setUint16(offset, 20, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint16(offset, dosTime, true); offset += 2;
+    view.setUint16(offset, dosDate, true); offset += 2;
+    view.setUint32(offset, p.crc, true); offset += 4;
+    view.setUint32(offset, p.size, true); offset += 4;
+    view.setUint32(offset, p.size, true); offset += 4;
+    view.setUint16(offset, p.nameBytes.length, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    buf.set(p.nameBytes, offset); offset += p.nameBytes.length;
+    buf.set(p.data, offset); offset += p.size;
+    centralMeta.push({ p, localOffset });
+  });
+  const centralStart = offset;
+  centralMeta.forEach(({ p, localOffset }) => {
+    view.setUint32(offset, 0x02014b50, true); offset += 4;
+    view.setUint16(offset, 20, true); offset += 2;
+    view.setUint16(offset, 20, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint16(offset, dosTime, true); offset += 2;
+    view.setUint16(offset, dosDate, true); offset += 2;
+    view.setUint32(offset, p.crc, true); offset += 4;
+    view.setUint32(offset, p.size, true); offset += 4;
+    view.setUint32(offset, p.size, true); offset += 4;
+    view.setUint16(offset, p.nameBytes.length, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint32(offset, 0, true); offset += 4;
+    view.setUint32(offset, localOffset, true); offset += 4;
+    buf.set(p.nameBytes, offset); offset += p.nameBytes.length;
+  });
+  const centralDirSize = offset - centralStart;
+  view.setUint32(offset, 0x06054b50, true); offset += 4;
+  view.setUint16(offset, 0, true); offset += 2;
+  view.setUint16(offset, 0, true); offset += 2;
+  view.setUint16(offset, prepared.length, true); offset += 2;
+  view.setUint16(offset, prepared.length, true); offset += 2;
+  view.setUint32(offset, centralDirSize, true); offset += 4;
+  view.setUint32(offset, centralStart, true); offset += 4;
+  view.setUint16(offset, 0, true); offset += 2;
+  return buf;
+}
+// Minimal JSZip-compatible surface (.file, .folder, .generateAsync) so the rest of the app's docx/xlsx
+// building code didn't need to change at all.
+function createZipBuilder(){
+  const entries = [];
+  function toBytes(content){
+    if (typeof content === 'string') return new TextEncoder().encode(content);
+    if (content instanceof Uint8Array) return content;
+    if (content instanceof ArrayBuffer) return new Uint8Array(content);
+    return new Uint8Array(0);
+  }
+  function addFile(path, content){ entries.push({ path: path.replace(/^\/+/, ''), data: toBytes(content) }); }
+  function folder(base){
+    const prefix = base.replace(/^\/+/, '').replace(/\/+$/, '');
+    return { file(name, content){ addFile(prefix + '/' + name, content); } };
+  }
+  async function generateAsync(opts){
+    const bytes = buildZipBytes(entries);
+    return new Blob([bytes], { type: (opts && opts.mimeType) || 'application/zip' });
+  }
+  return { file: addFile, folder, generateAsync };
+}
+// Replacement for FileSaver's saveAs() — triggers a normal browser download of a Blob, no library needed.
+function triggerDownload(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
 /* ============================= STATE ============================= */
 let uidCounter = 1;
 function uid(){ return 'id' + (uidCounter++) + '_' + Math.random().toString(36).slice(2,7); }
@@ -369,21 +490,50 @@ function idbGet(key){
 
 let saveTimer = null;
 let dirtySinceSave = false;
+const LS_KEY = 'akt_generator_draft_backup_v1'; // secondary fallback in case IndexedDB is unavailable
+// A lightweight, text-only copy of the draft (photos stripped out) — small enough to always fit in
+// localStorage's much smaller quota, used purely as a last-resort fallback if IndexedDB itself fails.
+function stateTextOnlyClone(){
+  const clone = JSON.parse(JSON.stringify(state));
+  (clone.sections || []).forEach(sec => {
+    (sec.findings || []).forEach(f => { f.photos = []; });
+    (sec.checkedOk || []).forEach(it => { it.photos = []; });
+  });
+  return clone;
+}
 function scheduleSave(){
   dirtySinceSave = true;
   const pill = document.getElementById('statusPill');
+  pill.classList.remove('warn');
   pill.textContent = 'сохранение…';
   clearTimeout(saveTimer);
   saveTimer = setTimeout(doSaveNow, 500);
 }
 async function doSaveNow(){
   const pill = document.getElementById('statusPill');
+  const json = JSON.stringify(state);
+  let idbOk = false, lsOk = false;
   try{
-    await idbSet(IDB_KEY(), JSON.stringify(state));
-    dirtySinceSave = false;
+    await idbSet(IDB_KEY(), json);
+    idbOk = true;
+  }catch(e){ /* handled below via lsOk fallback + warning */ }
+  try{
+    // Small text-only mirror (no photos) so there is still something to recover the form fields from
+    // even in the rare case IndexedDB itself is unavailable in this browser.
+    localStorage.setItem(LS_KEY, JSON.stringify(stateTextOnlyClone()));
+    lsOk = true;
+  }catch(e){ /* localStorage may be full or disabled — IndexedDB above is the primary store anyway */ }
+  dirtySinceSave = false;
+  pill.classList.remove('warn');
+  if (idbOk){
     pill.textContent = 'сохранено на этом устройстве · ' + new Date().toLocaleTimeString('ru-RU');
-  }catch(e){
-    pill.textContent = 'не удалось сохранить: ' + e.message;
+  } else if (lsOk){
+    pill.classList.add('warn');
+    pill.textContent = '⚠ сохранено частично (резервно) · проверьте, откроется ли акт после перезагрузки';
+  } else {
+    pill.classList.add('warn');
+    pill.textContent = '⚠ не удалось сохранить черновик на этом устройстве! Скачайте «Резервную копию» вручную';
+    dirtySinceSave = true;
   }
 }
 async function hardSaveNow(){
@@ -411,13 +561,27 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pagehide', flushIfDirty);
 
 async function loadDraft(){
+  let idbRaw = null, idbFailed = false;
   try{
-    const raw = await idbGet(IDB_KEY());
-    if (raw){
-      state = migrateState(JSON.parse(raw));
+    idbRaw = await idbGet(IDB_KEY());
+  }catch(e){ idbFailed = true; }
+  if (idbRaw){
+    try{ state = migrateState(JSON.parse(idbRaw)); return true; }catch(e){ /* fall through to localStorage below */ }
+  }
+  // IndexedDB had nothing (or failed) — try the text-only localStorage mirror before giving up.
+  try{
+    const lsRaw = localStorage.getItem(LS_KEY);
+    if (lsRaw){
+      state = migrateState(JSON.parse(lsRaw));
+      if (idbFailed){
+        setTimeout(() => toast('⚠ Текст черновика восстановлен из резервного хранилища, но фотографии могли не сохраниться — основное хранилище недоступно'), 300);
+      }
       return true;
     }
-  }catch(e){ /* no saved draft yet, or IndexedDB unavailable */ }
+  }catch(e){ /* no usable backup anywhere */ }
+  if (idbFailed){
+    setTimeout(() => toast('⚠ Хранилище браузера недоступно — черновик не сохранится автоматически. Используйте «Резервную копию» вручную.'), 300);
+  }
   return false;
 }
 
@@ -1696,20 +1860,26 @@ function handleFiles(finding, fileList, onDone){
   const files = Array.from(fileList || []);
   if (files.length === 0){ onDone(); return; }
   let remaining = files.length;
-  files.forEach(file => {
+  files.forEach((file, fileIdx) => {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result;
       const img = new Image();
       img.onload = () => {
         const ds = downscaleImage(img, 1600, 0.82);
-        finding.photos.push({
+        const photo = {
           id: uid(), name: file.name,
           mime: ds ? 'image/jpeg' : (file.type || 'image/jpeg'),
           dataUrl: ds ? ds.dataUrl : dataUrl,
           width: ds ? ds.width : (img.naturalWidth || 800),
           height: ds ? ds.height : (img.naturalHeight || 600)
-        });
+        };
+        finding.photos.push(photo);
+        // Also save a real copy of the photo straight to the phone's own storage (Downloads/Photos),
+        // independent of the browser's IndexedDB — so the picture survives even if the draft is ever
+        // lost or the browser data gets cleared. Staggered slightly so multiple photos taken in one go
+        // don't all try to download in the same instant (some browsers throttle simultaneous downloads).
+        setTimeout(() => savePhotoToDevice(photo), fileIdx * 350);
         remaining--; if (remaining === 0) onDone();
       };
       img.onerror = () => { remaining--; if (remaining === 0) onDone(); };
@@ -1718,6 +1888,94 @@ function handleFiles(finding, fileList, onDone){
     reader.onerror = () => { remaining--; if (remaining === 0) onDone(); };
     reader.readAsDataURL(file);
   });
+}
+// Converts a data: URL (what photos are stored as in state) into a Blob for downloading/zipping.
+function dataUrlToBlob(dataUrl){
+  const commaIdx = dataUrl.indexOf(',');
+  const header = dataUrl.slice(0, commaIdx);
+  const base64 = dataUrl.slice(commaIdx + 1);
+  const mimeMatch = /data:(.*?);base64/.exec(header);
+  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+function photoFileExt(mime){
+  if (/png/.test(mime)) return 'png';
+  if (/gif/.test(mime)) return 'gif';
+  return 'jpg';
+}
+// Best-effort save of one photo to the device's own Downloads/Photos — this must never interrupt the
+// person's work, so any failure here is silently ignored (the photo still lives in the act either way).
+function savePhotoToDevice(photo){
+  try{
+    const blob = dataUrlToBlob(photo.dataUrl);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    triggerDownload(blob, `Akt_foto_${stamp}.${photoFileExt(photo.mime)}`);
+  }catch(e){ /* never block the main flow over a failed device save */ }
+}
+// Gathers every photo across the whole act (both "осмотрено" entries and замечания), named by section
+// and finding number, for the "Скачать все фото" bulk backup below.
+function collectAllPhotosForZip(){
+  const files = [];
+  let n = 0;
+  state.sections.forEach((sec, si) => {
+    const secFolder = `${si+1}_${sanitizeFilename(sec.title || 'razdel')}`;
+    (sec.checkedOk || []).forEach(item => {
+      (item.photos || []).forEach(p => {
+        n++;
+        files.push({ path: `${secFolder}/osmotr_${n}.${photoFileExt(p.mime)}`, data: dataUrlToBytes(p.dataUrl) });
+      });
+    });
+    (sec.findings || []).forEach(f => {
+      (f.photos || []).forEach(p => {
+        n++;
+        const numTag = sanitizeFilename(f.number || String(n));
+        files.push({ path: `${secFolder}/zamechanie_${numTag}_${n}.${photoFileExt(p.mime)}`, data: dataUrlToBytes(p.dataUrl) });
+      });
+    });
+  });
+  return files;
+}
+async function downloadAllPhotosZip(){
+  const files = collectAllPhotosForZip();
+  if (!files.length){ toast('В акте пока нет ни одной фотографии'); return; }
+  const zip = createZipBuilder();
+  files.forEach(f => zip.file(f.path, f.data));
+  const blob = await zip.generateAsync({ type:'blob', mimeType:'application/zip' });
+  const meta = state.meta || {};
+  const fname = `Foto_${sanitizeFilename(meta.subdivisionName || 'akt')}_${meta.date || ''}.zip`;
+  triggerDownload(blob, fname);
+  toast(`Скачано фото — ${files.length} шт. в файле «${fname}»`);
+}
+// Full backup of the whole draft (all text + all photos) as one .json file the person saves themselves —
+// a real file on the phone that survives even if the browser's own storage for this page is ever cleared.
+function exportBackup(){
+  const json = JSON.stringify(state);
+  const blob = new Blob([json], { type:'application/json' });
+  const meta = state.meta || {};
+  const stamp = (meta.date || new Date().toISOString().slice(0,10));
+  const fname = `Akt_backup_${sanitizeFilename(meta.subdivisionName || 'chernovik')}_${stamp}.json`;
+  triggerDownload(blob, fname);
+  toast('Резервная копия акта сохранена в файл: ' + fname);
+}
+function importBackupFile(file){
+  const reader = new FileReader();
+  reader.onload = () => {
+    try{
+      const parsed = JSON.parse(reader.result);
+      if (!confirm('Заменить текущий черновик данными из этого файла резервной копии? Несохранённые изменения в текущем черновике будут потеряны.')) return;
+      state = migrateState(parsed);
+      renderAll();
+      hardSaveNow();
+      toast('Черновик восстановлен из резервной копии');
+    }catch(e){
+      toast('Не удалось прочитать файл резервной копии: ' + e.message);
+    }
+  };
+  reader.onerror = () => toast('Не удалось прочитать файл');
+  reader.readAsText(file);
 }
 
 /* ============================= SIGNATORIES RENDER ============================= */
@@ -2080,7 +2338,7 @@ async function generateDocx(){
   });
 
   const bodyXml = parts.join('\n');
-  const zip = new JSZip();
+  const zip = createZipBuilder();
   zip.file('[Content_Types].xml', contentTypesXml([]));
   zip.file('_rels/.rels', rootRelsXml());
   zip.file('word/document.xml', documentXml(bodyXml));
@@ -2091,7 +2349,7 @@ async function generateDocx(){
 
   const blob = await zip.generateAsync({ type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
   const fname = `Akt_${sanitizeFilename(meta.subdivisionType)}_${sanitizeFilename(meta.subdivisionName)}_${meta.date}.docx`;
-  saveAs(blob, fname);
+  triggerDownload(blob, fname);
   toast('Акт сформирован (без фото): ' + fname);
 }
 
@@ -2153,7 +2411,7 @@ async function generatePhotoAppendix(){
   });
 
   const bodyXml = parts.join('\n');
-  const zip = new JSZip();
+  const zip = createZipBuilder();
   zip.file('[Content_Types].xml', contentTypesXml(mediaFiles));
   zip.file('_rels/.rels', rootRelsXml());
   zip.file('word/document.xml', documentXml(bodyXml));
@@ -2166,7 +2424,7 @@ async function generatePhotoAppendix(){
 
   const blob = await zip.generateAsync({ type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
   const fname = `Fotoprilozhenie_${sanitizeFilename(meta.subdivisionType)}_${sanitizeFilename(meta.subdivisionName)}_${meta.date}.docx`;
-  saveAs(blob, fname);
+  triggerDownload(blob, fname);
   toast(`Фотоприложение сформировано (${total} фото): ` + fname);
 }
 
@@ -2357,7 +2615,7 @@ async function generateXlsx(){
   const colWidths = [7, 11, 55, 14, 30, 16, 18];
   const sheetXml = xlsxSheetXml(rows, merges, colWidths, rowHeights);
 
-  const zip = new JSZip();
+  const zip = createZipBuilder();
   zip.file('[Content_Types].xml', xlsxContentTypesXml());
   zip.file('_rels/.rels', xlsxRootRelsXml());
   zip.file('xl/workbook.xml', xlsxWorkbookXml('План устранения'));
@@ -2369,13 +2627,21 @@ async function generateXlsx(){
 
   const blob = await zip.generateAsync({ type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const fname = `Plan_ustraneniya_${sanitizeFilename(meta.subdivisionType)}_${sanitizeFilename(meta.subdivisionName)}_${meta.date}.xlsx`;
-  saveAs(blob, fname);
+  triggerDownload(blob, fname);
   toast('План устранения сформирован: ' + fname);
 }
 
 document.getElementById('btnGenDocx').addEventListener('click', () => generateDocx().catch(e => { console.error(e); toast('Ошибка при создании акта: ' + e.message); }));
 document.getElementById('btnGenPhotoAppendix').addEventListener('click', () => generatePhotoAppendix().catch(e => { console.error(e); toast('Ошибка при создании фотоприложения: ' + e.message); }));
 document.getElementById('btnGenXlsx').addEventListener('click', () => generateXlsx().catch(e => { console.error(e); toast('Ошибка при создании плана: ' + e.message); }));
+document.getElementById('btnDownloadAllPhotos').addEventListener('click', () => downloadAllPhotosZip().catch(e => { console.error(e); toast('Ошибка при скачивании фото: ' + e.message); }));
+document.getElementById('btnExportBackup').addEventListener('click', () => exportBackup());
+document.getElementById('btnImportBackup').addEventListener('click', () => document.getElementById('backupFileInput').click());
+document.getElementById('backupFileInput').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (file) importBackupFile(file);
+  e.target.value = '';
+});
 
 /* ============================= INIT ============================= */
 (async function init(){
